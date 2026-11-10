@@ -32,7 +32,6 @@ export function SpaView() {
     repos,
     user,
     pulls,
-    repoLabels,
     activeTab,
     activePrId,
     activePrData,
@@ -47,6 +46,11 @@ export function SpaView() {
     refreshPulls,
     saveGithubToken,
     saveClaudeKey,
+    saveClaudeModel,
+    claudeModel,
+    claudeCodeAuth,
+    claudeModels,
+    refreshClaudeCapabilities,
     disconnectGithub,
     removeClaudeKey,
     clearStatus,
@@ -55,7 +59,6 @@ export function SpaView() {
   const [query, setQuery] = useState("")
   const [repoSearch, setRepoSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "merged" | "closed">("all")
-  const [selectedLabel, setSelectedLabel] = useState("")
   const [githubTokenInput, setGithubTokenInput] = useState("")
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
 
@@ -72,11 +75,8 @@ export function SpaView() {
       if (statusFilter === "merged") return Boolean(p.merged_at)
       if (statusFilter === "closed") return p.state === "closed" && !p.merged_at
       return true
-    }).filter((p) => {
-      if (!selectedLabel) return true
-      return p.labels?.some((l) => l.name === selectedLabel)
     })
-  }, [pulls, query, statusFilter, selectedLabel])
+  }, [pulls, query, statusFilter])
 
   const openCount = useMemo(
     () => pulls.filter((p) => p.state === "open" && !p.merged_at).length,
@@ -288,8 +288,14 @@ export function SpaView() {
                 <span>Claude API Configuration</span>
               </CardTitle>
               <CardDescription className="text-xs">
-                Anthropic API key used by the autonomous review agent for code audit.
+                Anthropic API key used by the autonomous review agent. Leave blank to use the
+                Claude Code login on this device.
               </CardDescription>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="outline" className="text-[11px]">
+                  {claudeCodeAuth ? "Claude Code auth detected" : "No device login detected"}
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <Input
@@ -325,6 +331,40 @@ export function SpaView() {
                 >
                   Remove Key
                 </Button>
+              </div>
+              <div className="space-y-2 border-t border-border/60 pt-3">
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="claude-model" className="text-xs font-medium text-foreground">
+                    Review model
+                  </label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 gap-1 text-[11px]"
+                    onClick={() => void refreshClaudeCapabilities()}
+                  >
+                    <RefreshCw className="size-3" />
+                    Refresh models
+                  </Button>
+                </div>
+                <select
+                  id="claude-model"
+                  value={claudeModel}
+                  onChange={(e) => void saveClaudeModel(e.target.value)}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50"
+                >
+                  <option value="">Use default</option>
+                  {claudeModels.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.displayName} ({m.value})
+                    </option>
+                  ))}
+                </select>
+                {claudeModels.length === 0 && (
+                  <p className="text-[11px] text-muted-foreground">
+                    No models loaded. Save a key or log in with Claude Code, then refresh.
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -467,23 +507,6 @@ export function SpaView() {
                 className="h-8 pl-8 text-xs"
               />
             </div>
-
-            {/* Label Filter */}
-            {/*<div className="flex items-center gap-2">
-              <select
-                aria-label="Filter by label"
-                value={selectedLabel}
-                onChange={(e) => setSelectedLabel(e.target.value)}
-                className="h-8 rounded-md border border-border/70 bg-background px-2.5 text-xs font-medium text-foreground focus:ring-1 focus:ring-ring outline-none"
-              >
-                <option value="">All labels</option>
-                {repoLabels.map((label) => (
-                  <option key={label.name} value={label.name}>
-                    {label.name}
-                  </option>
-                ))}
-              </select>
-            </div>*/}
 
             {/* Status Filter Buttons */}
             <div className="inline-flex rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs">

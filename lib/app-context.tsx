@@ -66,6 +66,12 @@ interface AppContextType {
   refreshActivePr: () => Promise<void>
   saveGithubToken: (token: string, action: string) => Promise<void>
   saveClaudeKey: (key: string, action: string) => Promise<void>
+  saveClaudeModel: (model: string) => Promise<void>
+  claudeModel: string
+  claudeCodeAuth: boolean
+  claudeModels: { value: string; displayName: string; description: string }[]
+  claudeSkills: { name: string; description: string }[]
+  refreshClaudeCapabilities: () => Promise<void>
   disconnectGithub: () => Promise<void>
   removeClaudeKey: () => Promise<void>
   clearStatus: () => void
@@ -97,6 +103,12 @@ export function AppProvider({
   const [user, setUser] = useState("")
   const [pulls, setPulls] = useState<Pull[]>([])
   const [repoLabels, setRepoLabels] = useState<RepoLabel[]>([])
+  const [claudeModel, setClaudeModel] = useState("")
+  const [claudeCodeAuth, setClaudeCodeAuth] = useState(false)
+  const [claudeModels, setClaudeModels] = useState<
+    { value: string; displayName: string; description: string }[]
+  >([])
+  const [claudeSkills, setClaudeSkills] = useState<{ name: string; description: string }[]>([])
   const [activeTab, setActiveTabState] = useState<TabType>(initialTab || "dashboard")
   const [activePrId, setActivePrId] = useState<number | null>(initialPrId ?? null)
   const [activePrData, setActivePrData] = useState<PRDetailData | null>(null)
@@ -286,6 +298,37 @@ export function AppProvider({
     [req]
   )
 
+  const saveClaudeModel = useCallback(
+    async (model: string) => {
+      try {
+        await req("/api/settings", { action: "claude-model", model })
+        setClaudeModel(model)
+        setStatus("Claude model saved")
+        setStatusType("success")
+      } catch (e) {
+        setStatus((e as Error).message)
+        setStatusType("error")
+      }
+    },
+    [req]
+  )
+
+  const refreshClaudeCapabilities = useCallback(async () => {
+    try {
+      const d = await req("/api/claude?force=1")
+      setClaudeModels(d.models || [])
+      setClaudeSkills(d.skills || [])
+      setClaudeCodeAuth(Boolean(d.auth?.device) || Boolean(d.auth?.configured))
+      if (d.error) {
+        setStatus(d.error)
+        setStatusType("error")
+      }
+    } catch (e) {
+      setStatus((e as Error).message)
+      setStatusType("error")
+    }
+  }, [req])
+
   const disconnectGithub = useCallback(async () => {
     try {
       await req("/api/github", { action: "remove" })
@@ -318,6 +361,8 @@ export function AppProvider({
       try {
         const s = await req("/api/settings")
         if (!mounted) return
+        setClaudeModel(s.claudeModel || "")
+        setClaudeCodeAuth(Boolean(s.claudeCodeAuth))
         const activeRepoName = initialRepo || s.repo
         if (activeRepoName) setRepo(activeRepoName)
 
@@ -336,6 +381,8 @@ export function AppProvider({
         if (initialPrId && activeRepoName) {
           void loadPrData(initialPrId, activeRepoName)
         }
+
+        void refreshClaudeCapabilities()
       } catch (e) {
         if (mounted) {
           setStatus((e as Error).message)
@@ -352,7 +399,7 @@ export function AppProvider({
       mounted = false
       clearTimeout(timer)
     }
-  }, [initialPrId, initialRepo, loadPrData, loadPullsForRepo, req])
+  }, [initialPrId, initialRepo, loadPrData, loadPullsForRepo, req, refreshClaudeCapabilities])
 
   // Handle browser Back / Forward buttons (popstate)
   useEffect(() => {
@@ -407,6 +454,12 @@ export function AppProvider({
         refreshActivePr,
         saveGithubToken,
         saveClaudeKey,
+        saveClaudeModel,
+        claudeModel,
+        claudeCodeAuth,
+        claudeModels,
+        claudeSkills,
+        refreshClaudeCapabilities,
         disconnectGithub,
         removeClaudeKey,
         clearStatus,

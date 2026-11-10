@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { MarkdownView } from "@/components/markdown-view"
 import { cn } from "@/lib/utils"
+import { useApp } from "@/lib/app-context"
 
 export type Finding = {
   title: string
@@ -42,23 +43,34 @@ interface RunReviewProps {
 }
 
 export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProps) {
+  const { claudeModel, claudeModels, claudeSkills } = useApp()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<{ headSha: string; findings: Finding[] } | null>(null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
-  const [skills, setSkills] = useState<{ name: string; description: string }[]>([])
+  const [fetchedSkills, setFetchedSkills] = useState<{ name: string; description: string }[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
+  const [overrideModel, setOverrideModel] = useState<string>("")
+
+  const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
 
   useEffect(() => {
+    if (claudeSkills.length > 0) return
+    let active = true
     fetch("/api/skills")
       .then((r) => r.json())
       .then((d) => {
-        if (Array.isArray(d.skills)) setSkills(d.skills)
+        if (active && Array.isArray(d.skills)) setFetchedSkills(d.skills)
       })
       .catch(() => {})
-  }, [])
+    return () => {
+      active = false
+    }
+  }, [claudeSkills])
+
+  const skills = claudeSkills.length > 0 ? claudeSkills : fetchedSkills
 
   async function run() {
     setBusy(true)
@@ -68,7 +80,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
       const response = await fetch("/api/reviews", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo, number, skills: selectedSkills, customPrompt }),
+        body: JSON.stringify({ repo, number, skills: selectedSkills, customPrompt, model: effectiveModel }),
       })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || "Review failed")
@@ -159,7 +171,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                 </div>
                 <h3 className="text-lg font-bold text-foreground">AI Agent Code Review</h3>
                 <Badge variant="secondary" className="font-mono text-[10px]">
-                  Claude 3.7 Sonnet
+                  {effectiveModel || "Claude default"}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
@@ -202,6 +214,29 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="size-4 text-primary" />
             <h3 className="text-sm font-semibold">Review Options</h3>
+          </div>
+          <div>
+            <label htmlFor="review-model" className="mb-1 block text-xs text-muted-foreground">
+              Model
+            </label>
+            <select
+              id="review-model"
+              value={overrideModel}
+              onChange={(e) => setOverrideModel(e.target.value)}
+              className="flex h-8 w-full max-w-xs rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50"
+            >
+              <option value="">Use settings default</option>
+              {claudeModels.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.displayName} ({m.value})
+                </option>
+              ))}
+            </select>
+            {claudeModels.length === 0 && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                No models loaded. Configure Claude in Settings or refresh capabilities.
+              </p>
+            )}
           </div>
           <div>
             <p className="mb-1 text-xs text-muted-foreground">Skills to use</p>
