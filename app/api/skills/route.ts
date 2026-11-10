@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { deleteSkill, getSkill, listSkills, saveSkill } from "@/lib/skills"
+import { deleteSkill, getSkill, listSkills, saveSkill, SKILLS_DIR, PROJECT_ROOT } from "@/lib/skills"
 
 export const runtime = "nodejs"
 
@@ -9,9 +9,13 @@ export async function GET(request: NextRequest) {
     if (name) {
       const skill = await getSkill(name)
       if (!skill) return NextResponse.json({ error: "Skill not found" }, { status: 404 })
-      return NextResponse.json({ skill })
+      return NextResponse.json({ skill, directory: SKILLS_DIR, projectRoot: PROJECT_ROOT })
     }
-    return NextResponse.json({ skills: await listSkills() })
+    return NextResponse.json({
+      skills: await listSkills(),
+      directory: SKILLS_DIR,
+      projectRoot: PROJECT_ROOT,
+    })
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to load skills" },

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState, useRef } from "react"
 import {
   Sparkles,
   LoaderCircle,
@@ -14,8 +14,12 @@ import {
   Info,
   Bug,
   SlidersHorizontal,
+  ChevronDown,
+  Search,
+  X,
 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
@@ -24,15 +28,233 @@ import { MarkdownView } from "@/components/markdown-view"
 import { cn } from "@/lib/utils"
 import { useApp } from "@/lib/app-context"
 
-export type Finding = {
-  title: string
-  severity: "critical" | "high" | "medium" | "low" | "info" | string
-  filePath: string
-  lineNumber: number | null
-  problem: string
-  evidence: string
-  impact: string
-  solution: string
+import type { Finding, Review } from "@/lib/review-types"
+
+export type { Finding }
+
+interface SkillsMultiSelectProps {
+  skills: { name: string; description: string }[]
+  selected: string[]
+  onChange: (selected: string[]) => void
+}
+
+function SkillsMultiSelect({ skills, selected, onChange }: SkillsMultiSelectProps) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside)
+    }
+  }, [open])
+
+  const filteredSkills = skills.filter(
+    (s) =>
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.description.toLowerCase().includes(search.toLowerCase())
+  )
+
+  const toggleSkill = (name: string) => {
+    onChange(
+      selected.includes(name)
+        ? selected.filter((s) => s !== name)
+        : [...selected, name]
+    )
+  }
+
+  const selectAll = () => {
+    const allFiltered = filteredSkills.map((s) => s.name)
+    onChange(Array.from(new Set([...selected, ...allFiltered])))
+  }
+
+  const clearAll = () => {
+    onChange([])
+  }
+
+  const removeSkill = (name: string) => {
+    onChange(selected.filter((s) => s !== name))
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="relative" ref={dropdownRef}>
+        {/* Dropdown Trigger */}
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          className={cn(
+            "flex h-9 w-full max-w-md items-center justify-between rounded-lg border bg-background px-3 text-xs shadow-xs transition-colors hover:bg-muted/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring",
+            open ? "border-ring ring-1 ring-ring" : "border-input"
+          )}
+        >
+          <div className="flex items-center gap-2 truncate">
+            <Sparkles className="size-3.5 text-primary shrink-0" />
+            {selected.length === 0 ? (
+              <span className="text-muted-foreground">Select skills for agent review (optional)...</span>
+            ) : (
+              <span className="font-medium text-foreground">
+                {selected.length === 1 ? "1 skill enabled" : `${selected.length} skills enabled`}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0 ml-2">
+            {selected.length > 0 && (
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono h-4">
+                {selected.length}
+              </Badge>
+            )}
+            <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-180")} />
+          </div>
+        </button>
+
+        {/* Dropdown Menu Popup */}
+        {open && (
+          <div className="absolute left-0 top-full z-50 mt-1.5 w-full max-w-md rounded-xl border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl ring-1 ring-black/5 dark:ring-white/10 animate-in fade-in-0 zoom-in-95 duration-100">
+            {/* Search and Quick Actions */}
+            <div className="p-1 space-y-1.5 border-b border-border/50 pb-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Filter skills by name or keyword..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="h-8 pl-8 pr-7 text-xs bg-muted/40 border-border/60"
+                  autoFocus
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between px-1 text-[11px] text-muted-foreground">
+                <span>
+                  {filteredSkills.length} of {skills.length} available
+                </span>
+                <div className="flex items-center gap-2">
+                  {filteredSkills.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={selectAll}
+                      className="text-primary hover:underline font-medium cursor-pointer"
+                    >
+                      Select All
+                    </button>
+                  )}
+                  {selected.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearAll}
+                      className="text-muted-foreground hover:text-destructive hover:underline cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Skills Scrollable List */}
+            <div className="max-h-56 overflow-y-auto p-1 space-y-0.5 divide-y divide-border/20">
+              {filteredSkills.map((skill) => {
+                const isChecked = selected.includes(skill.name)
+                return (
+                  <div
+                    key={skill.name}
+                    onClick={() => toggleSkill(skill.name)}
+                    className={cn(
+                      "flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left select-none pt-2",
+                      isChecked ? "bg-primary/10 text-foreground" : "hover:bg-muted/60 text-foreground/90"
+                    )}
+                  >
+                    <Checkbox
+                      checked={isChecked}
+                      onCheckedChange={() => toggleSkill(skill.name)}
+                      className="mt-0.5"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-xs font-semibold text-foreground">
+                          /{skill.name}
+                        </span>
+                        {isChecked && (
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 bg-primary/15 text-primary border-primary/30">
+                            Active
+                          </Badge>
+                        )}
+                      </div>
+                      {skill.description ? (
+                        <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
+                          {skill.description}
+                        </p>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground/60 italic mt-0.5">
+                          No description provided
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+
+              {filteredSkills.length === 0 && (
+                <div className="py-6 text-center text-xs text-muted-foreground">
+                  {skills.length === 0 ? "No skills configured in project" : "No matching skills found"}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Selected skill chips with quick remove buttons */}
+      {selected.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+          {selected.map((skillName) => (
+            <Badge
+              key={skillName}
+              variant="secondary"
+              className="gap-1 pl-2 pr-1 py-0.5 text-[11px] font-mono bg-muted/90 hover:bg-muted border border-border/70 group"
+            >
+              <span>/{skillName}</span>
+              <button
+                type="button"
+                onClick={() => removeSkill(skillName)}
+                className="rounded p-0.5 hover:bg-destructive/20 hover:text-destructive cursor-pointer transition-colors"
+                title={`Remove /${skillName}`}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          ))}
+          {selected.length > 1 && (
+            <button
+              type="button"
+              onClick={clearAll}
+              className="text-[11px] text-muted-foreground hover:text-destructive hover:underline ml-1 cursor-pointer"
+            >
+              Clear all ({selected.length})
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 interface RunReviewProps {
@@ -46,13 +268,16 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const { claudeModel, claudeModels, claudeSkills } = useApp()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const [result, setResult] = useState<{ headSha: string; findings: Finding[] } | null>(null)
+  const [result, setResult] = useState<{ headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
   const [fetchedSkills, setFetchedSkills] = useState<{ name: string; description: string }[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState<string>("")
+  const [logs, setLogs] = useState<string[]>([])
+  const [history, setHistory] = useState<Review[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
 
@@ -72,19 +297,106 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
 
   const skills = claudeSkills.length > 0 ? claudeSkills : fetchedSkills
 
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true)
+    try {
+      const response = await fetch(
+        `/api/reviews?repo=${encodeURIComponent(repo)}&number=${number}`
+      )
+      if (!response.ok) return
+      const data = await response.json()
+      if (Array.isArray(data.reviews)) setHistory(data.reviews)
+    } catch {
+      // History is best-effort.
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [repo, number])
+
+  useEffect(() => {
+    let mounted = true
+    const timer = setTimeout(() => {
+      if (mounted) void loadHistory()
+    }, 0)
+    return () => {
+      mounted = false
+      clearTimeout(timer)
+    }
+  }, [loadHistory])
+
   async function run() {
     setBusy(true)
     setError("")
     setResult(null)
+    setLogs([])
     try {
       const response = await fetch("/api/reviews", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ repo, number, skills: selectedSkills, customPrompt, model: effectiveModel }),
       })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.error || "Review failed")
-      setResult(data)
+      if (!response.ok) {
+        const errData = (await response.json().catch(() => ({ error: `Request failed with ${response.status}` }))) as { error?: string }
+        throw new Error(errData.error || "Review failed")
+      }
+
+      const contentType = response.headers.get("content-type") || ""
+      if (contentType.includes("application/x-ndjson")) {
+        const reader = response.body?.getReader()
+        if (!reader) throw new Error("Review stream unavailable")
+        const decoder = new TextDecoder()
+        let buffer = ""
+        let finalReview: { headSha?: string; findings?: Finding[]; skills?: string[] } | null = null
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split("\n")
+          buffer = lines.pop() ?? ""
+          for (const line of lines) {
+            if (!line.trim()) continue
+            try {
+              const parsed = JSON.parse(line) as {
+                type?: string
+                message?: unknown
+                review?: { headSha?: string; findings?: Finding[]; skills?: string[] }
+                error?: string
+              }
+              if (parsed.type === "log") {
+                setLogs((prev) => [...prev, JSON.stringify(parsed.message)])
+              } else if (parsed.type === "result" && parsed.review) {
+                finalReview = parsed.review
+              } else if (parsed.type === "error") {
+                throw new Error(parsed.error || "Review failed")
+              }
+            } catch (err) {
+              if (err instanceof Error && !err.message.includes("JSON")) throw err
+            }
+          }
+        }
+        if (finalReview) {
+          setResult({
+            headSha: finalReview.headSha || headSha,
+            findings: finalReview.findings || [],
+            appliedSkills: finalReview.skills || selectedSkills,
+          })
+          void loadHistory()
+          return
+        }
+      }
+
+      const data = (await response.json()) as {
+        headSha?: string
+        findings?: Finding[]
+        appliedSkills?: string[]
+        review?: { headSha?: string; findings?: Finding[]; skills?: string[] }
+      }
+      setResult({
+        headSha: data.headSha || data.review?.headSha || headSha,
+        findings: data.findings || data.review?.findings || [],
+        appliedSkills: data.appliedSkills || data.review?.skills || selectedSkills,
+      })
+      void loadHistory()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Review failed")
     } finally {
@@ -239,25 +551,24 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             )}
           </div>
           <div>
-            <p className="mb-1 text-xs text-muted-foreground">Skills to use</p>
-            <div className="flex flex-wrap gap-2">
-              {skills.map((skill) => (
-                <label key={skill.name} className="flex items-center gap-1.5 text-xs">
-                  <Checkbox
-                    checked={selectedSkills.includes(skill.name)}
-                    onCheckedChange={(checked) => {
-                      setSelectedSkills((prev) =>
-                        checked ? [...prev, skill.name] : prev.filter((s) => s !== skill.name)
-                      )
-                    }}
-                  />
-                  {skill.name}
-                </label>
-              ))}
-              {skills.length === 0 && (
-                <span className="text-xs text-muted-foreground">No skills available.</span>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-medium text-foreground">
+                Agent Skills to Enforce
+              </label>
+              {selectedSkills.length > 0 && (
+                <span className="text-[11px] text-muted-foreground font-mono">
+                  {selectedSkills.length} selected
+                </span>
               )}
             </div>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Select skills from your project. Selected skills are directly injected into the review instructions and strictly enforced by the agent.
+            </p>
+            <SkillsMultiSelect
+              skills={skills}
+              selected={selectedSkills}
+              onChange={setSelectedSkills}
+            />
           </div>
           <div>
             <p className="mb-1 text-xs text-muted-foreground">Optional extra instructions</p>
@@ -271,12 +582,67 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         </CardContent>
       </Card>
 
+      {/* Review History */}
+      <Card className="border-border/70 shadow-xs">
+        <CardHeader className="flex flex-row items-center justify-between gap-2 py-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-semibold">Review History</h3>
+            {historyLoading && <LoaderCircle className="size-3 animate-spin text-muted-foreground" />}
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-[11px]"
+            onClick={() => void loadHistory()}
+            disabled={historyLoading}
+          >
+            Refresh
+          </Button>
+        </CardHeader>
+        <CardContent className="max-h-56 space-y-2 overflow-y-auto p-4">
+          {history.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No previous reviews.</p>
+          ) : (
+            history.map((review) => (
+              <button
+                key={review.id}
+                type="button"
+                onClick={() => {
+                  setResult({ headSha: review.headSha, findings: review.findings })
+                  setLogs([])
+                }}
+                className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 px-3 py-2 text-left text-xs hover:bg-muted/40"
+              >
+                <span className="font-medium">{new Date(review.createdAt).toLocaleString()}</span>
+                <span className="text-muted-foreground">
+                  {review.model} · {review.findings.length} findings
+                </span>
+              </button>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Live Logs */}
+      {(busy || logs.length > 0) && (
+        <Card className="border-border/70 shadow-xs">
+          <CardHeader className="py-3">
+            <h3 className="text-sm font-semibold">Live Agent Logs</h3>
+          </CardHeader>
+          <CardContent>
+            <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-3 text-[10px] leading-relaxed text-muted-foreground">
+              {logs.join("\n")}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
       {/* 2. Review Results or Onboarding Card */}
       {result ? (
         <div className="space-y-5">
-          {/* Commit SHA status */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-2.5 text-xs">
-            <div className="flex items-center gap-2">
+          {/* Commit SHA status & Applied Skills */}
+          <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-muted-foreground">Reviewed commit:</span>
               <code className="rounded bg-background px-1.5 py-0.5 font-mono font-semibold text-foreground border border-border/50">
                 {result.headSha.slice(0, 10)}
@@ -292,9 +658,27 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               )}
             </div>
 
-            <span className="text-muted-foreground">
-              Total findings: <strong className="text-foreground">{findings.length}</strong>
-            </span>
+            <div className="flex flex-wrap items-center gap-3">
+              {result.appliedSkills && result.appliedSkills.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground font-medium">Applied Skills:</span>
+                  <div className="flex flex-wrap gap-1">
+                    {result.appliedSkills.map((name) => (
+                      <Badge
+                        key={name}
+                        variant="outline"
+                        className="font-mono text-[10px] bg-background border-primary/30 text-primary font-semibold py-0"
+                      >
+                        /{name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <span className="text-muted-foreground">
+                Total findings: <strong className="text-foreground">{findings.length}</strong>
+              </span>
+            </div>
           </div>
 
           {/* Severity Breakdown Cards */}

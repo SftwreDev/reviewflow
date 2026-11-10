@@ -151,6 +151,7 @@ function getSkillIcon(name: string) {
 
 export function SkillsView() {
   const [skills, setSkills] = useState<Skill[]>([])
+  const [skillsDir, setSkillsDir] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -181,6 +182,7 @@ export function SkillsView() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed to load skills")
       setSkills(data.skills || [])
+      if (data.directory) setSkillsDir(data.directory)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load skills")
     } finally {
@@ -339,10 +341,13 @@ export function SkillsView() {
                   {skills.length} available
                 </Badge>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Autonomous agent capabilities defined in{" "}
-                <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground border border-border/50">
-                  .claude/skills
+              <p className="text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
+                <span>Autonomous capabilities loaded from</span>
+                <code
+                  className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground border border-border/50 truncate max-w-sm inline-block"
+                  title={skillsDir || ".claude/skills"}
+                >
+                  {skillsDir ? skillsDir.split("/").slice(-3).join("/") : ".claude/skills"}
                 </code>
               </p>
             </div>
@@ -622,7 +627,7 @@ export function SkillsView() {
           <p className="mx-auto max-w-md text-xs text-muted-foreground leading-relaxed">
             {searchQuery
               ? `No skills matched "${searchQuery}". Try searching for another keyword or clear your filter.`
-              : "Create custom skills in .claude/skills to teach the AI review agent project-specific rules, symbol index queries, or automated procedures."}
+              : `No skills found in ${skillsDir ? skillsDir.split("/").slice(-3).join("/") : ".claude/skills"}. ReviewFlow reads .claude/skills from the project root where the app was executed.`}
           </p>
           {searchQuery ? (
             <Button
@@ -688,7 +693,9 @@ export function SkillsView() {
                         /{selectedSkill.name}
                       </span>
                       <span>•</span>
-                      <span>.claude/skills/{selectedSkill.name}/SKILL.md</span>
+                      <span title={skillsDir ? `${skillsDir}/${selectedSkill.name}/SKILL.md` : undefined}>
+                        {skillsDir ? skillsDir.split("/").slice(-2).join("/") : ".claude/skills"}/{selectedSkill.name}/SKILL.md
+                      </span>
                     </div>
                   </div>
 
