@@ -10,13 +10,13 @@ npm install <your-git-repo-url>
 npm install -g <your-git-repo-url>
 ```
 
-The `prepare` script builds the app. Run:
+The app builds on first run. Run:
 
 ```bash
 reviewflow --port 3000
 ```
 
-This starts the app on the given port. The app reads `.claude/skills` from the project root where you run the command.
+First run compiles the app, then starts it on the given port. The app reads `.claude/skills` from the project root where you run the command.
 
 ## Agent Review options
 
