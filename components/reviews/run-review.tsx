@@ -17,6 +17,7 @@ import {
   ChevronDown,
   Search,
   X,
+  Send,
 } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -280,7 +281,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const { claudeModel, claudeModels } = useApp()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const [result, setResult] = useState<{ headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
+  const [result, setResult] = useState<{ id?: string; headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
   const [copiedReview, setCopiedReview] = useState(false)
@@ -289,6 +290,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState<string>("")
+  const [posting, setPosting] = useState(false)
+  const [postedUrl, setPostedUrl] = useState<string | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const [history, setHistory] = useState<Review[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -360,7 +363,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         if (!reader) throw new Error("Review stream unavailable")
         const decoder = new TextDecoder()
         let buffer = ""
-        let finalReview: { headSha?: string; findings?: Finding[]; skills?: string[] } | null = null
+        let finalReview: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] } | null = null
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
@@ -373,7 +376,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               const parsed = JSON.parse(line) as {
                 type?: string
                 message?: unknown
-                review?: { headSha?: string; findings?: Finding[]; skills?: string[] }
+                review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] }
                 error?: string
               }
               if (parsed.type === "log") {
@@ -390,6 +393,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         }
         if (finalReview) {
           setResult({
+            id: finalReview.id,
             headSha: finalReview.headSha || headSha,
             findings: finalReview.findings || [],
             appliedSkills: finalReview.skills || selectedSkills,
@@ -403,9 +407,10 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         headSha?: string
         findings?: Finding[]
         appliedSkills?: string[]
-        review?: { headSha?: string; findings?: Finding[]; skills?: string[] }
+        review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] }
       }
       setResult({
+        id: data.review?.id,
         headSha: data.headSha || data.review?.headSha || headSha,
         findings: data.findings || data.review?.findings || [],
         appliedSkills: data.appliedSkills || data.review?.skills || selectedSkills,
@@ -437,6 +442,26 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
       setTimeout(() => setCopiedReview(false), 2000)
     } catch {
       setError("Could not copy review results to clipboard")
+    }
+  }
+
+  const postToPr = async (event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES") => {
+    if (!result?.id) return
+    setPosting(true)
+    setError("")
+    try {
+      const response = await fetch("/api/reviews/post", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reviewId: result.id, repo, number, event }),
+      })
+      const data = (await response.json().catch(() => ({}))) as { review?: { html_url?: string }; error?: string }
+      if (!response.ok) throw new Error(data.error || `Failed to post review (${response.status})`)
+      setPostedUrl(data.review?.html_url ?? "posted")
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to post review to PR")
+    } finally {
+      setPosting(false)
     }
   }
 
@@ -709,6 +734,30 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                 {copiedReview ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                 {copiedReview ? "Copied" : "Copy Results"}
               </Button>
+              {result.id ? (
+                postedUrl ? (
+                  <a
+                    href={postedUrl.startsWith("http") ? postedUrl : undefined}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                  >
+                    <Check className="size-3.5" />
+                    Posted to PR
+                  </a>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={posting}
+                    onClick={() => void postToPr("COMMENT")}
+                    className="h-7 gap-1.5 text-xs"
+                  >
+                    {posting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                    {posting ? "Posting..." : "Post to PR"}
+                  </Button>
+                )
+              ) : null}
             </div>
           </div>
 

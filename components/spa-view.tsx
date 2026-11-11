@@ -5,6 +5,7 @@ import { useApp } from "@/lib/app-context"
 import { PRDetailClient } from "@/components/pull-requests/pr-detail-client"
 import { PRDetailSkeleton } from "@/components/pull-requests/pr-skeleton"
 import { SkillsView } from "@/components/skills-view"
+import { MetricsCards } from "@/components/metrics-cards"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -13,6 +14,7 @@ import {
   GitPullRequest,
   GitMerge,
   GitPullRequestClosed,
+  MessageSquareWarning,
   RefreshCw,
   Bot,
   GitBranch,
@@ -91,6 +93,26 @@ export function SpaView() {
     () => pulls.filter((p) => p.state === "closed" && !p.merged_at).length,
     [pulls]
   )
+
+  const reviewMetrics = useMemo(() => {
+    let totalTokenCost = 0
+    let totalTokens = 0
+    for (const review of reviewHistory) {
+      totalTokenCost += review.tokenUsage?.totalCostUsd ?? 0
+      totalTokens += review.tokenUsage?.totalTokens ?? 0
+    }
+    return {
+      totalTokenCost,
+      totalTokens,
+      totalReviews: reviewHistory.length,
+      unresolvedPrCount: pulls.filter(
+        (p) =>
+          p.state === "open" &&
+          !p.merged_at &&
+          (p.reviewDecision === "CHANGES_REQUESTED" || (p.comments ?? 0) > 0 || (p.review_comments ?? 0) > 0)
+      ).length,
+    }
+  }, [pulls, reviewHistory])
 
   // 1. If currently viewing a PR detail
   if (activePrId !== null) {
@@ -448,6 +470,13 @@ export function SpaView() {
       ) : (
         /* Tab: Dashboard or Pull Requests */
         <>
+          <MetricsCards
+            totalTokenCost={reviewMetrics.totalTokenCost}
+            totalTokens={reviewMetrics.totalTokens}
+            unresolvedPrCount={reviewMetrics.unresolvedPrCount}
+            totalReviews={reviewMetrics.totalReviews}
+          />
+
           {/* Quick Stat Cards */}
           <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card className="border-border/70 shadow-xs">
@@ -602,6 +631,14 @@ export function SpaView() {
                                 AI Reviewed
                               </Badge>
                             )}
+                            {(p.reviewDecision === "CHANGES_REQUESTED" || (p.comments ?? 0) > 0 || (p.review_comments ?? 0) > 0) ? (
+                              <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 gap-1 text-[10px] font-semibold">
+                                <MessageSquareWarning className="size-3" />
+                                <span>
+                                  {p.reviewDecision === "CHANGES_REQUESTED" ? "Changes requested" : `${(p.comments ?? 0) + (p.review_comments ?? 0)} unresolved`}
+                                </span>
+                              </Badge>
+                            ) : null}
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

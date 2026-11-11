@@ -36,6 +36,19 @@ async function api(token: string, endpoint: string) {
   if (!response.ok) throw new Error(response.status === 403 ? `GitHub denied request (rate limit or permission): ${body.message}` : `GitHub ${response.status}: ${body.message}`)
   return body
 }
+async function graphql(token: string, query: string, variables: Record<string, unknown>) {
+  const response = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+    cache: "no-store",
+  })
+  const body = await response.json()
+  if (!response.ok) throw new Error(`GitHub GraphQL ${response.status}: ${body.message}`)
+  if (body.errors)
+    throw new Error(`GitHub GraphQL error: ${body.errors.map((e: { message: string }) => e.message).join(", ")}`)
+  return body.data
+}
 async function originOK(request: NextRequest) {
   const origin = request.headers.get("origin")
   return !origin || origin === new URL(request.url).origin
@@ -85,14 +98,81 @@ export async function GET(request: NextRequest) {
         checks: checks?.check_runs || [],
       })
     }
-    const pulls: { number: number; user: { login: string }; labels?: { name: string; color: string }[] }[] = []
-    for (const state of ["open", "closed"]) for (let page = 1; page <= 10; page++) {
-      const batch = (await api(token, `/repos/${repo}/pulls?state=${state}&per_page=100&page=${page}&sort=updated&direction=desc`)) as { number: number; user: { login: string }; labels?: { name: string; color: string }[] }[]
-      pulls.push(...batch.filter((pr) => pr.user.login === who.login))
-      if (batch.length < 100) break
+    const [owner, name] = repo.split("/")
+    const pulls: {
+      number: number
+      title: string
+      state: string
+      draft: boolean
+      merged_at: string | null
+      html_url: string
+      user: { login: string }
+      created_at: string
+      updated_at: string
+      head: { ref: string; sha: string }
+      base: { ref: string }
+      requested_reviewers: { login: string }[]
+      labels?: { name: string; color: string }[]
+      comments?: number
+      review_comments?: number
+      reviewDecision?: string | null
+    }[] = []
+    let after: string | null = null
+    for (let i = 0; i < 10; i++) {
+      const result = await graphql(
+        token,
+        `query($owner: String!, $name: String!, $first: Int!, $after: String) {
+          repository(owner: $owner, name: $name) {
+            pullRequests(first: $first, after: $after, states: [OPEN, CLOSED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+              nodes {
+                number
+                title
+                state
+                isDraft
+                mergedAt
+                url
+                author { login }
+                createdAt
+                updatedAt
+                headRefName
+                headRefOid
+                baseRefName
+                labels(first: 10) { nodes { name color } }
+                reviewDecision
+                reviewThreads(first: 100) { nodes { isResolved } }
+                comments(first: 0) { totalCount }
+              }
+              pageInfo { hasNextPage endCursor }
+            }
+          }
+        }`,
+        { owner, name, first: 100, after }
+      )
+      const connection = result.repository.pullRequests
+      for (const node of connection.nodes) {
+        pulls.push({
+          number: node.number,
+          title: node.title,
+          state: node.state.toLowerCase(),
+          draft: node.isDraft,
+          merged_at: node.mergedAt,
+          html_url: node.url,
+          user: { login: node.author?.login ?? "" },
+          created_at: node.createdAt,
+          updated_at: node.updatedAt,
+          head: { ref: node.headRefName, sha: node.headRefOid },
+          base: { ref: node.baseRefName },
+          requested_reviewers: [],
+          labels: node.labels?.nodes?.map((l: { name: string; color: string }) => ({ name: l.name, color: l.color })) ?? [],
+          comments: node.comments?.totalCount ?? 0,
+          review_comments: node.reviewThreads?.nodes?.filter((n: { isResolved: boolean }) => !n.isResolved).length ?? 0,
+          reviewDecision: node.reviewDecision ?? null,
+        })
+      }
+      if (!connection.pageInfo.hasNextPage) break
+      after = connection.pageInfo.endCursor
     }
-    const seen = new Map(pulls.map(pr => [pr.number, pr]))
-    return NextResponse.json({ pulls: [...seen.values()], user: who.login })
+    return NextResponse.json({ pulls, user: who.login })
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "GitHub request failed" }, { status: 502 }) }
 }
 export async function POST(request: NextRequest) {

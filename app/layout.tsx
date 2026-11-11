@@ -2,6 +2,7 @@ import { Geist_Mono, Space_Grotesk, DM_Sans } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
+import { Toaster } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils";
 
 const dmSansHeading = DM_Sans({subsets:['latin'],variable:'--font-heading'});
@@ -25,7 +26,7 @@ export default function RootLayout({
       className={cn("antialiased", fontMono.variable, "font-sans", spaceGrotesk.variable, dmSansHeading.variable, "overflow-x-hidden max-w-full")}
     >
       <body className="overflow-x-hidden max-w-full">
-        <ThemeProvider>{children}</ThemeProvider>
+        <ThemeProvider>{children}<Toaster /></ThemeProvider>
       </body>
     </html>
   )

@@ -9,6 +9,15 @@ export type Finding = {
   solution: string
 }
 
+export type TokenUsage = {
+  inputTokens: number
+  outputTokens: number
+  cacheCreationInputTokens: number
+  cacheReadInputTokens: number
+  totalTokens: number
+  totalCostUsd: number
+}
+
 export type Review = {
   id: string
   repo: string
@@ -18,5 +27,6 @@ export type Review = {
   skills: string[]
   customPrompt: string
   findings: Finding[]
+  tokenUsage?: TokenUsage
   createdAt: string
 }

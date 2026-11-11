@@ -12,6 +12,8 @@ import type { PullRequestData, CheckRun } from "@/components/pull-requests/pr-he
 import type { ChangedFile } from "@/components/pull-requests/pr-files-view"
 import type { ReviewData, IssueCommentData } from "@/components/pull-requests/pr-overview"
 import type { InlineComment } from "@/components/pull-requests/diff-viewer"
+import type { TokenUsage } from "@/lib/review-types"
+import { toast } from "sonner"
 
 export type Repo = { full_name: string; private: boolean; description: string | null }
 
@@ -29,6 +31,9 @@ export type Pull = {
   base: { ref: string }
   requested_reviewers: { login: string }[]
   labels?: { name: string; color: string }[]
+  comments?: number
+  review_comments?: number
+  reviewDecision?: string | null
 }
 
 export type RepoLabel = { name: string; color: string }
@@ -51,7 +56,12 @@ interface AppContextType {
   user: string
   pulls: Pull[]
   repoLabels: RepoLabel[]
-  reviewHistory: { number: number; headSha: string; createdAt: string }[]
+  reviewHistory: {
+    number: number
+    headSha: string
+    createdAt: string
+    tokenUsage?: TokenUsage
+  }[]
   activeTab: TabType
   activePrId: number | null
   activePrData: PRDetailData | null
@@ -104,7 +114,9 @@ export function AppProvider({
   const [user, setUser] = useState("")
   const [pulls, setPulls] = useState<Pull[]>([])
   const [repoLabels, setRepoLabels] = useState<RepoLabel[]>([])
-  const [reviewHistory, setReviewHistory] = useState<{ number: number; headSha: string; createdAt: string }[]>([])
+  const [reviewHistory, setReviewHistory] = useState<
+    { number: number; headSha: string; createdAt: string; tokenUsage?: TokenUsage }[]
+  >([])
   const [claudeModel, setClaudeModel] = useState("")
   const [claudeCodeAuth, setClaudeCodeAuth] = useState(false)
   const [claudeModels, setClaudeModels] = useState<
@@ -121,6 +133,8 @@ export function AppProvider({
 
   // Cache PR details in memory: key is `${repo}#${number}`
   const prCache = useRef<Map<string, PRDetailData>>(new Map())
+  // Track previous pull counts to detect new comments/change requests
+  const prevPullsRef = useRef<Pull[]>([])
 
   const clearStatus = useCallback(() => {
     setStatus("")
@@ -152,7 +166,23 @@ export function AppProvider({
           req(`/api/github?repo=${encodeURIComponent(repoName)}&labels=1`),
           req(`/api/reviews?repo=${encodeURIComponent(repoName)}`),
         ])
-        setPulls(d.pulls || [])
+        const newPulls = (d.pulls || []) as Pull[]
+        const previous = prevPullsRef.current
+        if (previous.length > 0) {
+          for (const p of newPulls) {
+            const old = previous.find((x) => x.number === p.number)
+            if (!old) continue
+            const oldComments = (old.comments ?? 0) + (old.review_comments ?? 0)
+            const newComments = (p.comments ?? 0) + (p.review_comments ?? 0)
+            if (newComments > oldComments) {
+              toast.info(`PR #${p.number} has ${newComments - oldComments} new comment(s)`, {
+                description: p.title,
+              })
+            }
+          }
+        }
+        prevPullsRef.current = newPulls
+        setPulls(newPulls)
         setRepoLabels(l.labels || [])
         setReviewHistory(r.reviews || [])
       } catch (e) {
@@ -357,6 +387,15 @@ export function AppProvider({
       setStatusType("error")
     }
   }, [req])
+
+  // Poll for PR updates to detect new comments/change requests
+  useEffect(() => {
+    if (!repo) return
+    const interval = setInterval(() => {
+      void loadPullsForRepo(repo)
+    }, 60_000)
+    return () => clearInterval(interval)
+  }, [repo, loadPullsForRepo])
 
   // Initial load
   useEffect(() => {

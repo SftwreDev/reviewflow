@@ -5,6 +5,7 @@ import { readCredential } from "@/lib/credentials"
 import { hasClaudeCodeAuth } from "@/lib/claude"
 import { getReview, listReviews, listRepoReviews, saveReview } from "@/lib/reviews-store"
 import { getSkill } from "@/lib/skills"
+import type { TokenUsage } from "@/lib/review-types"
 export const runtime = "nodejs"
 
 const findingSchema = z.object({
@@ -60,7 +61,14 @@ export async function GET(request: NextRequest) {
   if (!rawNumber) {
     try {
       const reviews = await listRepoReviews(repo)
-      return NextResponse.json({ reviews: reviews.map(({ number, headSha, createdAt }) => ({ number, headSha, createdAt })) })
+      return NextResponse.json({
+        reviews: reviews.map(({ number, headSha, createdAt, tokenUsage }) => ({
+          number,
+          headSha,
+          createdAt,
+          tokenUsage,
+        })),
+      })
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load review history" }, { status: 500 })
     }
@@ -201,10 +209,27 @@ ${s.content}
             },
           })
           let output: unknown
+          let tokenUsage: TokenUsage | undefined
           for await (const message of events) {
             send({ type: "log", message })
-            if (message.type === "result" && message.subtype === "success")
+            if (message.type === "result" && message.subtype === "success") {
               output = message.structured_output
+              const u = message.usage
+              if (u) {
+                tokenUsage = {
+                  inputTokens: u.input_tokens ?? 0,
+                  outputTokens: u.output_tokens ?? 0,
+                  cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
+                  cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+                  totalTokens:
+                    (u.input_tokens ?? 0) +
+                    (u.output_tokens ?? 0) +
+                    (u.cache_creation_input_tokens ?? 0) +
+                    (u.cache_read_input_tokens ?? 0),
+                  totalCostUsd: message.total_cost_usd ?? 0,
+                }
+              }
+            }
           }
           if (!output) {
             send({ type: "error", error: "Claude returned no structured review" })
@@ -220,6 +245,7 @@ ${s.content}
             skills,
             customPrompt,
             findings: validated.findings,
+            tokenUsage,
           })
           send({ type: "result", review })
           controller.close()
