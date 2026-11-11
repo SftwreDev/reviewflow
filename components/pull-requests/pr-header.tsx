@@ -105,7 +105,7 @@ export function PRHeader({
   }
 
   return (
-    <header className="space-y-4 rounded-xl border border-border/70 bg-card p-5 shadow-xs">
+    <header className="space-y-4 rounded-xl border border-border/70 bg-card p-5 shadow-xs max-w-full min-w-0">
         {/* Navigation & Actions Top Row */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

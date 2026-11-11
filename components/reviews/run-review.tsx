@@ -271,6 +271,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [result, setResult] = useState<{ headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
+  const [copiedReview, setCopiedReview] = useState(false)
   const [fetchedSkills, setFetchedSkills] = useState<{ name: string; description: string }[]>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
@@ -413,6 +414,18 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
       // Ignore
     }
   }
+  const copyReview = async () => {
+    const text = findings.length
+      ? findings.map((finding) => `## ${finding.title}\n\n**Severity:** ${finding.severity}\n\n**Location:** \`${finding.filePath}${finding.lineNumber ? `:${finding.lineNumber}` : ""}\`\n\n### Problem\n\n${finding.problem}\n\n### Evidence\n\n> ${finding.evidence.replace(/\n/g, "\n> ")}\n\n### Impact\n\n${finding.impact}\n\n### Suggested fix\n\n${finding.solution}`).join("\n\n---\n\n")
+      : "AI review found no evidence-backed findings."
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedReview(true)
+      setTimeout(() => setCopiedReview(false), 2000)
+    } catch {
+      setError("Could not copy review results to clipboard")
+    }
+  }
 
   const findings = result?.findings || []
   const criticalCount = findings.filter((f) => f.severity === "critical").length
@@ -471,7 +484,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-full min-w-0">
       {/* 1. Header Banner */}
       <Card className="border-border/70 shadow-xs overflow-hidden">
         <div className="bg-gradient-to-r from-primary/5 via-primary/10 to-transparent p-6">
@@ -639,7 +652,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
 
       {/* 2. Review Results or Onboarding Card */}
       {result ? (
-        <div className="space-y-5">
+        <div className="space-y-5 max-w-full min-w-0">
           {/* Commit SHA status & Applied Skills */}
           <div className="flex flex-col gap-2 rounded-lg border border-border/60 bg-muted/30 p-3 text-xs sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
@@ -678,6 +691,10 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               <span className="text-muted-foreground">
                 Total findings: <strong className="text-foreground">{findings.length}</strong>
               </span>
+              <Button variant="outline" size="sm" onClick={() => void copyReview()} className="h-7 gap-1.5 text-xs">
+                {copiedReview ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                {copiedReview ? "Copied" : "Copy Results"}
+              </Button>
             </div>
           </div>
 
@@ -758,20 +775,20 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               {filteredFindings.map((finding, idx) => (
                 <Card
                   key={`${finding.filePath}-${finding.lineNumber}-${idx}`}
-                  className="overflow-hidden border-border/70 shadow-xs"
+                  className="overflow-hidden border-border/70 shadow-xs max-w-full min-w-0"
                 >
                   {/* Finding Header */}
-                  <CardHeader className="bg-muted/30 border-b border-border/50 py-3.5 px-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-2.5">
+                  <CardHeader className="bg-muted/30 border-b border-border/50 py-3.5 px-5 max-w-full min-w-0">
+                    <div className="flex flex-wrap items-center justify-between gap-3 min-w-0">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         {getSeverityBadge(finding.severity)}
-                        <span className="font-bold text-sm text-foreground">{finding.title}</span>
+                        <span className="font-bold text-sm text-foreground break-words">{finding.title}</span>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-md bg-background px-2.5 py-1 font-mono text-xs text-foreground border border-border/60">
-                          <FileCode className="size-3 text-muted-foreground" />
-                          <span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="inline-flex items-center gap-1.5 rounded-md bg-background px-2.5 py-1 font-mono text-xs text-foreground border border-border/60 max-w-[280px] sm:max-w-md truncate min-w-0">
+                          <FileCode className="size-3 text-muted-foreground shrink-0" />
+                          <span className="truncate">
                             {finding.filePath}
                             {finding.lineNumber ? `:${finding.lineNumber}` : ""}
                           </span>
@@ -781,7 +798,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                           <button
                             type="button"
                             onClick={() => onJumpToFile(finding.filePath)}
-                            className="text-xs text-primary hover:underline inline-flex items-center gap-0.5 ml-1"
+                            className="text-xs text-primary hover:underline inline-flex items-center gap-0.5 ml-1 cursor-pointer"
                           >
                             <span>Jump to diff</span>
                             <ArrowRight className="size-3" />
@@ -791,9 +808,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                     </div>
                   </CardHeader>
 
-                  <CardContent className="p-5 space-y-4 text-xs">
+                  <CardContent className="p-5 space-y-4 text-xs max-w-full min-w-0">
                     {/* Problem */}
-                    <div>
+                    <div className="max-w-full min-w-0 break-words">
                       <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
                         Problem
                       </h4>
@@ -802,28 +819,28 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
 
                     {/* Evidence */}
                     {finding.evidence && (
-                      <div>
+                      <div className="max-w-full min-w-0">
                         <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
                           Evidence in Code
                         </h4>
-                        <div className="rounded-md border border-border/60 bg-muted/40 p-3 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed text-foreground/90">
+                        <div className="rounded-md border border-border/60 bg-muted/40 p-3 font-mono text-xs overflow-x-auto whitespace-pre leading-relaxed text-foreground/90 max-w-full min-w-0">
                           {finding.evidence}
                         </div>
                       </div>
                     )}
 
                     {/* Impact */}
-                    <div>
+                    <div className="max-w-full min-w-0">
                       <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
                         Potential Impact
                       </h4>
-                      <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-amber-950 dark:text-amber-200">
+                      <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-amber-950 dark:text-amber-200 max-w-full min-w-0 break-words">
                         <MarkdownView content={finding.impact} />
                       </div>
                     </div>
 
                     {/* Suggested Solution */}
-                    <div>
+                    <div className="max-w-full min-w-0">
                       <div className="flex items-center justify-between mb-1">
                         <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
                           Suggested Fix
@@ -831,7 +848,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                         <button
                           type="button"
                           onClick={() => copyFix(finding.solution, idx)}
-                          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                          className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                         >
                           {copiedFixIndex === idx ? (
                             <>
@@ -846,7 +863,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                           )}
                         </button>
                       </div>
-                      <div className="rounded-md border border-border/60 bg-muted/30 p-3 font-mono text-xs overflow-x-auto leading-relaxed">
+                      <div className="rounded-md border border-border/60 bg-muted/30 p-3 font-mono text-xs overflow-x-auto leading-relaxed max-w-full min-w-0">
                         <MarkdownView content={finding.solution} />
                       </div>
                     </div>

@@ -22,9 +22,9 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn("antialiased", fontMono.variable, "font-sans", spaceGrotesk.variable, dmSansHeading.variable)}
+      className={cn("antialiased", fontMono.variable, "font-sans", spaceGrotesk.variable, dmSansHeading.variable, "overflow-x-hidden max-w-full")}
     >
-      <body>
+      <body className="overflow-x-hidden max-w-full">
         <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>

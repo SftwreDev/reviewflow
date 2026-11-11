@@ -55,6 +55,8 @@ export async function GET(request: NextRequest) {
   if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
     return NextResponse.json({ error: "Invalid repository" }, { status: 400 })
   }
+  const rawNumber = request.nextUrl.searchParams.get("number")
+  const number = rawNumber ? Number(rawNumber) : NaN
   if (!rawNumber) {
     try {
       const reviews = await listRepoReviews(repo)

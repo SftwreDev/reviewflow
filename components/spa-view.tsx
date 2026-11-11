@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo, useEffect } from "react"
+import React, { useState, useMemo } from "react"
 import { useApp } from "@/lib/app-context"
 import { PRDetailClient } from "@/components/pull-requests/pr-detail-client"
 import { PRDetailSkeleton } from "@/components/pull-requests/pr-skeleton"
@@ -32,6 +32,8 @@ export function SpaView() {
     repos,
     user,
     pulls,
+    repoLabels,
+    reviewHistory,
     activeTab,
     activePrId,
     activePrData,
@@ -59,6 +61,7 @@ export function SpaView() {
   const [query, setQuery] = useState("")
   const [repoSearch, setRepoSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "merged" | "closed">("all")
+  const [selectedLabel, setSelectedLabel] = useState("")
   const [githubTokenInput, setGithubTokenInput] = useState("")
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
 
@@ -75,8 +78,11 @@ export function SpaView() {
       if (statusFilter === "merged") return Boolean(p.merged_at)
       if (statusFilter === "closed") return p.state === "closed" && !p.merged_at
       return true
+    }).filter((p) => {
+      if (!selectedLabel) return true
+      return p.labels?.some((l) => l.name === selectedLabel)
     })
-  }, [pulls, query, statusFilter])
+  }, [pulls, query, statusFilter, selectedLabel])
 
   const openCount = useMemo(
     () => pulls.filter((p) => p.state === "open" && !p.merged_at).length,
@@ -99,7 +105,7 @@ export function SpaView() {
 
     if (activePrData?.pr) {
       return (
-        <div className="animate-in fade-in duration-150">
+        <div className="animate-in fade-in duration-150 max-w-full min-w-0">
           <PRDetailClient
             pr={activePrData.pr}
             repo={repo}
@@ -508,6 +514,8 @@ export function SpaView() {
               />
             </div>
 
+            {/* Label filter temporarily hidden. */}
+
             {/* Status Filter Buttons */}
             <div className="inline-flex rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs">
               {(
@@ -559,6 +567,7 @@ export function SpaView() {
                     const isMerged = Boolean(p.merged_at)
                     const isDraft = p.draft
                     const isOpen = p.state === "open" && !isMerged
+                    const isAiReviewed = reviewHistory.some((r) => r.number === p.number) || p.labels?.some((l) => l.name === "ai-reviewed")
 
                     return (
                       <button
@@ -593,6 +602,11 @@ export function SpaView() {
                             <span className="font-semibold text-sm text-foreground group-hover:text-primary transition-colors">
                               #{p.number} {p.title}
                             </span>
+                            {isAiReviewed && (
+                              <Badge className="bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30 text-[10px]">
+                                AI Reviewed
+                              </Badge>
+                            )}
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

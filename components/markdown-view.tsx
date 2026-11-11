@@ -23,7 +23,7 @@ function CodeBlock({
   if (isInline) {
     return (
       <code
-        className="rounded bg-muted/80 px-1.5 py-0.5 font-mono text-[0.88em] font-medium text-foreground border border-border/60"
+        className="rounded bg-muted/80 px-1.5 py-0.5 font-mono text-[0.88em] font-medium text-foreground border border-border/60 break-words break-all inline"
         {...props}
       >
         {children}
@@ -46,7 +46,7 @@ function CodeBlock({
   }
 
   return (
-    <div className="relative my-3 rounded-xl border border-border/70 bg-muted/40 font-mono text-xs overflow-hidden shadow-2xs">
+    <div className="relative my-3 rounded-xl border border-border/70 bg-muted/40 font-mono text-xs overflow-hidden shadow-2xs max-w-full min-w-0">
       <div className="flex items-center justify-between border-b border-border/50 bg-muted/70 px-3.5 py-1.5 text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
           <div className="flex gap-1.5">
@@ -104,7 +104,7 @@ export function MarkdownView({ content, className }: MarkdownViewProps) {
   }
 
   return (
-    <div className={cn("markdown-content text-sm text-foreground/90 break-words leading-relaxed", className)}>
+    <div className={cn("markdown-content text-sm text-foreground/90 break-words leading-relaxed max-w-full min-w-0 overflow-hidden", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

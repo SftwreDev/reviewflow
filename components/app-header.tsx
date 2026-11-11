@@ -12,7 +12,7 @@ export function AppHeader() {
   const { repo, repos, selectRepo, user, activePrId, closePr } = useApp()
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-border/70 px-4 lg:px-6 bg-background/95 backdrop-blur-xs sticky top-0 z-20">
+    <header className="flex h-14 w-full max-w-full shrink-0 items-center justify-between border-b border-border/70 px-4 lg:px-6 bg-background/95 backdrop-blur-xs sticky top-0 z-20">
       <div className="flex items-center gap-2 min-w-0">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="mx-2 h-4" />

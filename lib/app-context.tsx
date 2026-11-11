@@ -25,7 +25,7 @@ export type Pull = {
   user: { login: string; avatar_url?: string }
   created_at: string
   updated_at: string
-  head: { ref: string }
+  head: { ref: string; sha: string }
   base: { ref: string }
   requested_reviewers: { login: string }[]
   labels?: { name: string; color: string }[]
@@ -51,6 +51,7 @@ interface AppContextType {
   user: string
   pulls: Pull[]
   repoLabels: RepoLabel[]
+  reviewHistory: { number: number; headSha: string; createdAt: string }[]
   activeTab: TabType
   activePrId: number | null
   activePrData: PRDetailData | null
@@ -103,6 +104,7 @@ export function AppProvider({
   const [user, setUser] = useState("")
   const [pulls, setPulls] = useState<Pull[]>([])
   const [repoLabels, setRepoLabels] = useState<RepoLabel[]>([])
+  const [reviewHistory, setReviewHistory] = useState<{ number: number; headSha: string; createdAt: string }[]>([])
   const [claudeModel, setClaudeModel] = useState("")
   const [claudeCodeAuth, setClaudeCodeAuth] = useState(false)
   const [claudeModels, setClaudeModels] = useState<
@@ -145,12 +147,14 @@ export function AppProvider({
       if (!repoName) return
       setIsLoadingPulls(true)
       try {
-        const [d, l] = await Promise.all([
+        const [d, l, r] = await Promise.all([
           req(`/api/github?repo=${encodeURIComponent(repoName)}`),
           req(`/api/github?repo=${encodeURIComponent(repoName)}&labels=1`),
+          req(`/api/reviews?repo=${encodeURIComponent(repoName)}`),
         ])
         setPulls(d.pulls || [])
         setRepoLabels(l.labels || [])
+        setReviewHistory(r.reviews || [])
       } catch (e) {
         setStatus((e as Error).message)
         setStatusType("error")
@@ -439,6 +443,7 @@ export function AppProvider({
         user,
         pulls,
         repoLabels,
+        reviewHistory,
         activeTab,
         activePrId,
         activePrData,
