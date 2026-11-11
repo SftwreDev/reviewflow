@@ -32,7 +32,6 @@ export function SpaView() {
     repos,
     user,
     pulls,
-    repoLabels,
     reviewHistory,
     activeTab,
     activePrId,
@@ -61,7 +60,6 @@ export function SpaView() {
   const [query, setQuery] = useState("")
   const [repoSearch, setRepoSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "merged" | "closed">("all")
-  const [selectedLabel, setSelectedLabel] = useState("")
   const [githubTokenInput, setGithubTokenInput] = useState("")
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
 
@@ -78,11 +76,8 @@ export function SpaView() {
       if (statusFilter === "merged") return Boolean(p.merged_at)
       if (statusFilter === "closed") return p.state === "closed" && !p.merged_at
       return true
-    }).filter((p) => {
-      if (!selectedLabel) return true
-      return p.labels?.some((l) => l.name === selectedLabel)
     })
-  }, [pulls, query, statusFilter, selectedLabel])
+  }, [pulls, query, statusFilter])
 
   const openCount = useMemo(
     () => pulls.filter((p) => p.state === "open" && !p.merged_at).length,

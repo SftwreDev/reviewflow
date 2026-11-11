@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState, useRef } from "react"
+import { useCallback, useEffect, useState } from "react"
 import {
   Sparkles,
   LoaderCircle,
@@ -24,6 +24,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover"
 import { MarkdownView } from "@/components/markdown-view"
 import { cn } from "@/lib/utils"
 import { useApp } from "@/lib/app-context"
@@ -36,26 +37,12 @@ interface SkillsMultiSelectProps {
   skills: { name: string; description: string }[]
   selected: string[]
   onChange: (selected: string[]) => void
+  isLoading?: boolean
 }
 
-function SkillsMultiSelect({ skills, selected, onChange }: SkillsMultiSelectProps) {
+function SkillsMultiSelect({ skills, selected, onChange, isLoading }: SkillsMultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
-  const dropdownRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside)
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside)
-    }
-  }, [open])
 
   const filteredSkills = skills.filter(
     (s) =>
@@ -86,19 +73,22 @@ function SkillsMultiSelect({ skills, selected, onChange }: SkillsMultiSelectProp
 
   return (
     <div className="space-y-2">
-      <div className="relative" ref={dropdownRef}>
+      <Popover open={open} onOpenChange={setOpen}>
         {/* Dropdown Trigger */}
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
+        <PopoverTrigger
           className={cn(
-            "flex h-9 w-full max-w-md items-center justify-between rounded-lg border bg-background px-3 text-xs shadow-xs transition-colors hover:bg-muted/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring",
+            "flex h-9 w-full max-w-md items-center justify-between rounded-lg border bg-background px-3 text-xs shadow-xs transition-colors hover:bg-muted/40 cursor-pointer focus:outline-none focus:ring-1 focus:ring-ring text-left",
             open ? "border-ring ring-1 ring-ring" : "border-input"
           )}
         >
           <div className="flex items-center gap-2 truncate">
             <Sparkles className="size-3.5 text-primary shrink-0" />
-            {selected.length === 0 ? (
+            {isLoading ? (
+              <span className="text-muted-foreground flex items-center gap-1.5">
+                <LoaderCircle className="size-3 animate-spin" />
+                Loading skills...
+              </span>
+            ) : selected.length === 0 ? (
               <span className="text-muted-foreground">Select skills for agent review (optional)...</span>
             ) : (
               <span className="font-medium text-foreground">
@@ -113,114 +103,136 @@ function SkillsMultiSelect({ skills, selected, onChange }: SkillsMultiSelectProp
                 {selected.length}
               </Badge>
             )}
-            <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform duration-200", open && "rotate-180")} />
+            <ChevronDown
+              className={cn(
+                "size-3.5 text-muted-foreground transition-transform duration-200",
+                open && "rotate-180"
+              )}
+            />
           </div>
-        </button>
+        </PopoverTrigger>
 
-        {/* Dropdown Menu Popup */}
-        {open && (
-          <div className="absolute left-0 top-full z-50 mt-1.5 w-full max-w-md rounded-xl border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-xl ring-1 ring-black/5 dark:ring-white/10 animate-in fade-in-0 zoom-in-95 duration-100">
-            {/* Search and Quick Actions */}
-            <div className="p-1 space-y-1.5 border-b border-border/50 pb-2">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-                <Input
-                  placeholder="Filter skills by name or keyword..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="h-8 pl-8 pr-7 text-xs bg-muted/40 border-border/60"
-                  autoFocus
-                />
-                {search && (
+        {/* Dropdown Menu Popup - Portaled outside container */}
+        <PopoverContent
+          align="start"
+          sideOffset={6}
+          className="w-[min(480px,calc(100vw-2rem))] p-0 shadow-2xl border-border/80 bg-popover rounded-xl"
+        >
+          {/* Search and Quick Actions */}
+          <div className="p-2 space-y-2 border-b border-border/50">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Filter skills by name or keyword..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-8 pl-8 pr-7 text-xs bg-muted/40 border-border/60"
+                autoFocus
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between px-1 text-[11px] text-muted-foreground">
+              <span>
+                {filteredSkills.length} of {skills.length} available
+              </span>
+              <div className="flex items-center gap-2 font-medium">
+                {filteredSkills.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => setSearch("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                    onClick={selectAll}
+                    className="text-primary hover:underline cursor-pointer"
                   >
-                    <X className="size-3" />
+                    Select All
+                  </button>
+                )}
+                {selected.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearAll}
+                    className="text-muted-foreground hover:text-destructive hover:underline cursor-pointer"
+                  >
+                    Clear
                   </button>
                 )}
               </div>
-
-              <div className="flex items-center justify-between px-1 text-[11px] text-muted-foreground">
-                <span>
-                  {filteredSkills.length} of {skills.length} available
-                </span>
-                <div className="flex items-center gap-2">
-                  {filteredSkills.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={selectAll}
-                      className="text-primary hover:underline font-medium cursor-pointer"
-                    >
-                      Select All
-                    </button>
-                  )}
-                  {selected.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearAll}
-                      className="text-muted-foreground hover:text-destructive hover:underline cursor-pointer"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Skills Scrollable List */}
-            <div className="max-h-56 overflow-y-auto p-1 space-y-0.5 divide-y divide-border/20">
-              {filteredSkills.map((skill) => {
-                const isChecked = selected.includes(skill.name)
-                return (
-                  <div
-                    key={skill.name}
-                    onClick={() => toggleSkill(skill.name)}
-                    className={cn(
-                      "flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left select-none pt-2",
-                      isChecked ? "bg-primary/10 text-foreground" : "hover:bg-muted/60 text-foreground/90"
-                    )}
-                  >
-                    <Checkbox
-                      checked={isChecked}
-                      onCheckedChange={() => toggleSkill(skill.name)}
-                      className="mt-0.5"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-xs font-semibold text-foreground">
-                          /{skill.name}
-                        </span>
-                        {isChecked && (
-                          <Badge variant="outline" className="text-[9px] px-1 py-0 bg-primary/15 text-primary border-primary/30">
-                            Active
-                          </Badge>
-                        )}
-                      </div>
-                      {skill.description ? (
-                        <p className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5">
-                          {skill.description}
-                        </p>
-                      ) : (
-                        <p className="text-[11px] text-muted-foreground/60 italic mt-0.5">
-                          No description provided
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-
-              {filteredSkills.length === 0 && (
-                <div className="py-6 text-center text-xs text-muted-foreground">
-                  {skills.length === 0 ? "No skills configured in project" : "No matching skills found"}
-                </div>
-              )}
             </div>
           </div>
-        )}
-      </div>
+
+          {/* Skills Scrollable List */}
+          <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5 divide-y divide-border/20">
+            {filteredSkills.map((skill) => {
+              const isChecked = selected.includes(skill.name)
+              return (
+                <div
+                  key={skill.name}
+                  onClick={() => toggleSkill(skill.name)}
+                  className={cn(
+                    "flex items-start gap-2.5 p-2 rounded-lg cursor-pointer transition-colors text-left select-none pt-2",
+                    isChecked
+                      ? "bg-primary/10 text-foreground"
+                      : "hover:bg-muted/60 text-foreground/90"
+                  )}
+                >
+                  <Checkbox
+                    checked={isChecked}
+                    onCheckedChange={() => toggleSkill(skill.name)}
+                    className="mt-0.5"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-xs font-semibold text-foreground">
+                        /{skill.name}
+                      </span>
+                      {isChecked && (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] px-1 py-0 bg-primary/15 text-primary border-primary/30"
+                        >
+                          Active
+                        </Badge>
+                      )}
+                    </div>
+                    {skill.description ? (
+                      <p className="text-[11px] text-muted-foreground line-clamp-2 mt-0.5 leading-relaxed">
+                        {skill.description}
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground/60 italic mt-0.5">
+                        No description provided
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+
+            {filteredSkills.length === 0 && (
+              <div className="py-6 px-4 text-center text-xs text-muted-foreground">
+                {skills.length === 0 ? (
+                  <div className="space-y-1">
+                    <p className="font-medium text-foreground">No skills configured in project</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Create review skills in the Skills tab or add SKILL.md folders to{" "}
+                      <code className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">.claude/skills</code>.
+                    </p>
+                  </div>
+                ) : (
+                  "No matching skills found"
+                )}
+              </div>
+            )}
+          </div>
+        </PopoverContent>
+      </Popover>
 
       {/* Selected skill chips with quick remove buttons */}
       {selected.length > 0 && (
@@ -265,14 +277,15 @@ interface RunReviewProps {
 }
 
 export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProps) {
-  const { claudeModel, claudeModels, claudeSkills } = useApp()
+  const { claudeModel, claudeModels } = useApp()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<{ headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
   const [copiedReview, setCopiedReview] = useState(false)
-  const [fetchedSkills, setFetchedSkills] = useState<{ name: string; description: string }[]>([])
+  const [skills, setSkills] = useState<{ name: string; description: string }[]>([])
+  const [loadingSkills, setLoadingSkills] = useState(true)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState<string>("")
@@ -283,20 +296,20 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
 
   useEffect(() => {
-    if (claudeSkills.length > 0) return
     let active = true
     fetch("/api/skills")
       .then((r) => r.json())
       .then((d) => {
-        if (active && Array.isArray(d.skills)) setFetchedSkills(d.skills)
+        if (active && Array.isArray(d.skills)) setSkills(d.skills)
       })
       .catch(() => {})
+      .finally(() => {
+        if (active) setLoadingSkills(false)
+      })
     return () => {
       active = false
     }
-  }, [claudeSkills])
-
-  const skills = claudeSkills.length > 0 ? claudeSkills : fetchedSkills
+  }, [])
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -534,8 +547,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
       </Card>
 
       {/* Review Options */}
-      <Card className="border-border/70 shadow-xs">
-        <CardContent className="space-y-3 p-4">
+      <Card className="border-border/70 shadow-xs overflow-visible">
+        <CardContent className="space-y-3 p-4 overflow-visible">
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="size-4 text-primary" />
             <h3 className="text-sm font-semibold">Review Options</h3>
@@ -581,6 +594,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               skills={skills}
               selected={selectedSkills}
               onChange={setSelectedSkills}
+              isLoading={loadingSkills}
             />
           </div>
           <div>

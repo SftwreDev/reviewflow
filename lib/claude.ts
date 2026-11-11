@@ -1,5 +1,6 @@
 import { query, type AccountInfo, type Query } from "@anthropic-ai/claude-agent-sdk"
 import { readCredential } from "@/lib/credentials"
+import { listSkills } from "@/lib/skills"
 import { access } from "node:fs/promises"
 import path from "node:path"
 import { execFile } from "node:child_process"
@@ -87,16 +88,16 @@ export async function getClaudeCapabilities(force = false): Promise<ClaudeCapabi
       },
     })
     const init = await q.initializationResult()
+    const projectSkills = await listSkills().catch(() => [])
     const data: ClaudeCapabilities = {
       models: init.models.map((m) => ({
         value: m.value,
         displayName: m.displayName,
         description: m.description,
       })),
-      skills: init.commands.map((c) => ({
-        name: c.name,
-        description: c.description,
-        argumentHint: c.argumentHint,
+      skills: projectSkills.map((s) => ({
+        name: s.name,
+        description: s.description,
       })),
       auth,
       account: init.account as AccountInfo,
@@ -104,9 +105,13 @@ export async function getClaudeCapabilities(force = false): Promise<ClaudeCapabi
     cache = { at: Date.now(), data }
     return data
   } catch (error) {
+    const projectSkills = await listSkills().catch(() => [])
     return {
       models: [],
-      skills: [],
+      skills: projectSkills.map((s) => ({
+        name: s.name,
+        description: s.description,
+      })),
       auth,
       error: error instanceof Error ? error.message : "Failed to connect to Claude",
     }
