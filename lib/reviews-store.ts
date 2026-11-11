@@ -34,6 +34,22 @@ export async function listReviews(repo: string, number: number): Promise<Review[
   return reviews.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
+export async function listRepoReviews(repo: string): Promise<Review[]> {
+  await ensureDirectory()
+  const files = await readdir(directory)
+  const reviews: Review[] = []
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue
+    try {
+      const review = JSON.parse(await readFile(path.join(directory, file), "utf8")) as Review
+      if (review.repo === repo) reviews.push(review)
+    } catch {
+      // Ignore malformed records.
+    }
+  }
+  return reviews.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
 export async function getReview(id: string): Promise<Review | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null
   try {

@@ -3,7 +3,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk"
 import { z } from "zod"
 import { readCredential } from "@/lib/credentials"
 import { hasClaudeCodeAuth } from "@/lib/claude"
-import { getReview, listReviews, saveReview } from "@/lib/reviews-store"
+import { getReview, listReviews, listRepoReviews, saveReview } from "@/lib/reviews-store"
 import { getSkill } from "@/lib/skills"
 export const runtime = "nodejs"
 
@@ -52,11 +52,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(review)
   }
   const repo = request.nextUrl.searchParams.get("repo")
-  const rawNumber = request.nextUrl.searchParams.get("number")
-  const number = rawNumber ? Number(rawNumber) : NaN
-  if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo) || !Number.isInteger(number) || number < 1) {
-    return NextResponse.json({ error: "Invalid repository or pull request" }, { status: 400 })
+  if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+    return NextResponse.json({ error: "Invalid repository" }, { status: 400 })
   }
+  if (!rawNumber) {
+    try {
+      const reviews = await listRepoReviews(repo)
+      return NextResponse.json({ reviews: reviews.map(({ number, headSha, createdAt }) => ({ number, headSha, createdAt })) })
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to load review history" }, { status: 500 })
+    }
+  }
+  if (!Number.isInteger(number) || number < 1) return NextResponse.json({ error: "Invalid pull request" }, { status: 400 })
   try {
     return NextResponse.json({ reviews: await listReviews(repo, number) })
   } catch (error) {

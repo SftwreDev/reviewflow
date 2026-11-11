@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React, { useState, useMemo, useEffect } from "react"
 import { useApp } from "@/lib/app-context"
 import { PRDetailClient } from "@/components/pull-requests/pr-detail-client"
 import { PRDetailSkeleton } from "@/components/pull-requests/pr-skeleton"
