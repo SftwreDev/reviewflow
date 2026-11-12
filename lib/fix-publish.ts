@@ -1,4 +1,5 @@
 import { ghRest } from "@/lib/github-rest"
+import { recordAddressedFeedback, type AddressedFeedback } from "@/lib/addressed-feedback"
 import { cleanupSession, pushHead, type FixSession } from "@/lib/fix-sessions"
 
 export type PublishResult = { sha: string; posted: number; failed: string[] }
@@ -12,6 +13,30 @@ export async function publishQueue(session: FixSession, token: string): Promise<
   const queue = session.queue
   // The branch is pushed: the worktree is no longer needed regardless of how replies go.
   await cleanupSession(session.id)
+
+  const addressedAt = new Date().toISOString()
+  const addressed: AddressedFeedback[] = []
+  for (const commit of queue) {
+    for (const item of commit.addressed ?? []) {
+      const target = session.targets.find((t) => t.kind === item.kind && t.id === item.id)
+      // Sessions created before address tracking have no body fingerprint, so leave any existing record alone.
+      if (!target || target.body === undefined) continue
+      const reply = commit.replies.find((r) => r.kind === item.kind && r.id === item.id)
+      addressed.push({
+        kind: item.kind,
+        id: item.id,
+        author: target.author,
+        body: target.body,
+        location: target.location,
+        status: item.status,
+        reply: reply?.body ?? "",
+        sha: commit.sha,
+        addressedAt,
+      })
+    }
+  }
+  // The push already succeeded; a local bookkeeping failure must not turn it into a push error.
+  await recordAddressedFeedback(session.repo, session.number, addressed).catch(() => {})
 
   const failed: string[] = []
   let posted = 0

@@ -26,7 +26,14 @@ export type FixResult = {
   reply: string
 }
 export type QueuedReply = { kind: FeedbackKind; id: number; body: string; status: FixResult["status"] }
-export type QueuedCommit = { sha: string; message: string; replies: QueuedReply[] }
+export type QueuedAddressed = { kind: FeedbackKind; id: number; status: FixResult["status"] }
+export type QueuedCommit = {
+  sha: string
+  message: string
+  replies: QueuedReply[]
+  /** Feedback whose code changes are in this commit. Recorded when the queue is pushed. */
+  addressed?: QueuedAddressed[]
+}
 export type Identity = { login: string; userId: number }
 
 /**
@@ -44,7 +51,7 @@ export type FixSession = {
   createdAt: string
   model: string
   skills: string[]
-  targets: { kind: FeedbackKind; id: number; author: string }[]
+  targets: { kind: FeedbackKind; id: number; author: string; body?: string; location?: string }[]
   summary: string
   results: FixResult[]
   queue: QueuedCommit[]

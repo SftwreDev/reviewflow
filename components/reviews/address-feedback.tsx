@@ -6,6 +6,7 @@ import {
   Check,
   CloudUpload,
   GitCommitHorizontal,
+  History,
   LoaderCircle,
   RefreshCw,
   SlidersHorizontal,
@@ -30,6 +31,17 @@ import { cn } from "@/lib/utils"
 type Kind = "inline" | "issue" | "review"
 type Item = { key: string; kind: Kind; id: number; author: string; body: string; location?: string }
 type FixResult = { kind: Kind; id: number; status: "fixed" | "partial" | "declined"; reply: string }
+type AddressedRecord = {
+  kind: Kind
+  id: number
+  author: string
+  body: string
+  location?: string
+  status: FixResult["status"]
+  reply: string
+  sha: string
+  addressedAt: string
+}
 type FixOutcome = {
   id: string | null
   summary: string
@@ -86,6 +98,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState("")
+  const [addressed, setAddressed] = useState<AddressedRecord[]>([])
   const sessionRef = useRef<string | null>(null)
 
   const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
@@ -101,31 +114,88 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     }
   }, [repo, pr.number])
 
+  const refreshAddressed = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/fixes/addressed?repo=${encodeURIComponent(repo)}&number=${pr.number}`)
+      if (!response.ok) throw new Error("Could not load addressed feedback")
+      const data = (await response.json()) as { records?: AddressedRecord[] }
+      setAddressed(Array.isArray(data.records) ? data.records : [])
+    } catch {
+      setAddressed([])
+    }
+  }, [repo, pr.number])
+
+  const addressedByKey = useMemo(
+    () => new Map(addressed.map((record) => [keyOf(record.kind, record.id), record])),
+    [addressed]
+  )
+
   const items = useMemo<Item[]>(() => {
     const list: Item[] = []
+    const addressedItem = (kind: Kind, id: number, body: string) => {
+      const record = addressedByKey.get(keyOf(kind, id))
+      return Boolean(record && record.body === body)
+    }
+    const inlineById = new Map(reviewComments.map((comment) => [comment.id, comment]))
+    const rootOf = (comment: InlineComment) => {
+      let current = comment
+      const seen = new Set<number>()
+      while (current.in_reply_to_id && !seen.has(current.id)) {
+        seen.add(current.id)
+        const parent = inlineById.get(current.in_reply_to_id)
+        if (!parent) break
+        current = parent
+      }
+      return current
+    }
+
     for (const c of reviewComments) {
-      if (c.in_reply_to_id || c.user.login === user) continue
-      list.push({
-        key: keyOf("inline", c.id),
-        kind: "inline",
-        id: c.id,
-        author: c.user.login,
-        body: c.body,
-        location: c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : undefined,
-      })
+      if (c.user.login === user) continue
+      const location = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : undefined
+      if (!c.in_reply_to_id) {
+        if (addressedItem("inline", c.id, c.body)) continue
+        list.push({ key: keyOf("inline", c.id), kind: "inline", id: c.id, author: c.user.login, body: c.body, location })
+        continue
+      }
+      // Replies were covered by their root comment. Once the root is addressed, only replies posted
+      // afterwards are new feedback.
+      const rootRecord = addressedByKey.get(keyOf("inline", rootOf(c).id))
+      if (!rootRecord || addressedItem("inline", c.id, c.body)) continue
+      const repliedAt = c.created_at ? Date.parse(c.created_at) : NaN
+      const addressedAt = Date.parse(rootRecord.addressedAt)
+      if (!Number.isFinite(repliedAt) || !Number.isFinite(addressedAt) || repliedAt <= addressedAt) continue
+      list.push({ key: keyOf("inline", c.id), kind: "inline", id: c.id, author: c.user.login, body: c.body, location })
     }
     for (const r of reviews) {
       if (!r.body?.trim() || r.user.login === user) continue
+      if (addressedItem("review", r.id, r.body)) continue
       list.push({ key: keyOf("review", r.id), kind: "review", id: r.id, author: r.user.login, body: r.body, location: `Review · ${r.state.toLowerCase().replace("_", " ")}` })
     }
     for (const c of comments) {
       if (c.user.login === user) continue
+      if (addressedItem("issue", c.id, c.body)) continue
       list.push({ key: keyOf("issue", c.id), kind: "issue", id: c.id, author: c.user.login, body: c.body, location: "Conversation" })
     }
     return list
-  }, [reviewComments, reviews, comments, user])
+  }, [reviewComments, reviews, comments, user, addressedByKey])
 
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(items.map((i) => i.key)))
+  const [selected, setSelected] = useState<Set<string> | null>(null)
+  const selectedKeys = useMemo(() => selected ?? new Set(items.map((i) => i.key)), [selected, items])
+
+  useEffect(() => {
+    let active = true
+    fetch(`/api/fixes/addressed?repo=${encodeURIComponent(repo)}&number=${pr.number}`)
+      .then((response) => (response.ok ? response.json() : { records: [] }))
+      .then((data: { records?: AddressedRecord[] }) => {
+        if (active) setAddressed(Array.isArray(data.records) ? data.records : [])
+      })
+      .catch(() => {
+        if (active) setAddressed([])
+      })
+    return () => {
+      active = false
+    }
+  }, [repo, pr.number])
 
   useEffect(() => {
     let active = true
@@ -174,7 +244,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
 
   const toggle = (key: string) =>
     setSelected((prev) => {
-      const next = new Set(prev)
+      const next = new Set(prev ?? items.map((i) => i.key))
       if (next.has(key)) next.delete(key)
       else next.add(key)
       return next
@@ -193,7 +263,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
         body: JSON.stringify({
           repo,
           number: pr.number,
-          targets: items.filter((i) => selected.has(i.key)).map(({ kind, id }) => ({ kind, id })),
+          targets: items.filter((i) => selectedKeys.has(i.key)).map(({ kind, id }) => ({ kind, id })),
           skills: selectedSkills,
           customPrompt,
           model: effectiveModel,
@@ -267,6 +337,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
         setOutcome(null)
         setPhase("idle")
       }
+      if (data.pushed) await refreshAddressed()
       await refreshWorkspace()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Approve failed")
@@ -327,6 +398,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       const data = await postJson<{ sha: string; posted: number; failed: string[] }>("/api/fixes/push", { sessionId: workspace.id })
       setDone({ sha: data.sha, posted: data.posted, failed: data.failed })
       setPhase("done")
+      await refreshAddressed()
       await refreshWorkspace()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Push failed")
@@ -377,7 +449,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
             </div>
             <Button
               onClick={() => void run()}
-              disabled={running || phase === "review" || selected.size === 0 || Boolean(workspace?.merging)}
+              disabled={running || phase === "review" || selectedKeys.size === 0 || Boolean(workspace?.merging)}
               className="gap-2 font-medium shrink-0 shadow-xs"
             >
               {running ? (
@@ -388,7 +460,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
               ) : (
                 <>
                   <Wrench className="size-4" />
-                  <span>Address {selected.size} comment{selected.size === 1 ? "" : "s"}</span>
+                  <span>Address {selectedKeys.size} comment{selectedKeys.size === 1 ? "" : "s"}</span>
                 </>
               )}
             </Button>
@@ -404,6 +476,38 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
 
       {notice && (
         <div className="rounded-md border border-sky-500/30 bg-sky-500/10 px-4 py-2 text-xs text-sky-800 dark:text-sky-200">{notice}</div>
+      )}
+
+      {addressed.length > 0 && (
+        <Card className="border-border/70 shadow-xs">
+          <CardHeader className="py-3">
+            <div className="flex items-center gap-2">
+              <History className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold">Addressed feedback ({addressed.length})</h3>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Hidden from the list below. A comment reappears if it is edited or gets a new reply or change request.
+            </p>
+          </CardHeader>
+          <CardContent className="max-h-72 space-y-2 overflow-y-auto p-4 pt-0">
+            {addressed.map((record) => (
+              <div key={keyOf(record.kind, record.id)} className="rounded-md border border-border/60 p-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge className={cn("text-[10px] font-semibold uppercase", STATUS_STYLES[record.status])}>
+                    {record.status}
+                  </Badge>
+                  <span className="font-semibold">@{record.author}</span>
+                  {record.location && (
+                    <code className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{record.location}</code>
+                  )}
+                  <code className="font-mono text-[10px] text-muted-foreground">{record.sha.slice(0, 7)}</code>
+                  <span className="text-[10px] text-muted-foreground">{record.addressedAt.slice(0, 10)}</span>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground line-clamp-2">{record.body}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       {workspace?.merging && (
@@ -480,17 +584,19 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
             </CardHeader>
             <CardContent className="max-h-96 space-y-2 overflow-y-auto p-4">
               {items.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No comments from other people on this pull request.</p>
+                <p className="text-xs text-muted-foreground">
+                  No unaddressed feedback from other people. Edited comments and new replies or change requests will appear here.
+                </p>
               ) : (
                 items.map((item) => (
                   <label
                     key={item.key}
                     className={cn(
                       "flex cursor-pointer items-start gap-3 rounded-md border border-border/60 p-3 text-xs hover:bg-muted/40",
-                      selected.has(item.key) && "border-primary/40 bg-primary/5"
+                      selectedKeys.has(item.key) && "border-primary/40 bg-primary/5"
                     )}
                   >
-                    <Checkbox checked={selected.has(item.key)} disabled={running} onCheckedChange={() => toggle(item.key)} className="mt-0.5" />
+                    <Checkbox checked={selectedKeys.has(item.key)} disabled={running} onCheckedChange={() => toggle(item.key)} className="mt-0.5" />
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold text-foreground">@{item.author}</span>

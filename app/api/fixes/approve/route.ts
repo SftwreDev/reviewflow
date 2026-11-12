@@ -51,7 +51,10 @@ export async function POST(request: NextRequest) {
     const who = await ghRest<{ login: string; id: number }>(token, "/user")
     const sha = await commitStaged(session, message, { login: who.login, userId: who.id })
     if (!sha) throw new Error("No changes to commit")
-    session.queue.push({ sha, message, replies })
+    const addressed = session.results
+      .filter((result) => result.status !== "declined")
+      .map((result) => ({ kind: result.kind, id: result.id, status: result.status }))
+    session.queue.push({ sha, message, replies, addressed })
     session.summary = ""
     session.results = []
     await saveSession(session)

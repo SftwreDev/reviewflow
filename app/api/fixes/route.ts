@@ -73,7 +73,7 @@ type GhPr = {
 type GhInline = { id: number; user: { login: string }; body: string; path: string; line: number | null; original_line: number | null; diff_hunk: string; in_reply_to_id?: number }
 type GhIssue = { id: number; user: { login: string }; body: string }
 type GhReview = { id: number; user: { login: string }; body: string; state: string }
-type Target = { kind: FeedbackKind; id: number; author: string; text: string }
+type Target = { kind: FeedbackKind; id: number; author: string; text: string; body: string; location?: string }
 
 /** Current workspace for a PR (if any): queued commits, merge/conflict state, uncommitted changes. */
 export async function GET(request: NextRequest) {
@@ -163,14 +163,32 @@ export async function POST(request: NextRequest) {
             kind: "inline",
             id: c.id,
             author: c.user.login,
+            body: c.body,
+            location: `${c.path}${c.line ? `:${c.line}` : ""}`,
             text: `path: ${c.path}\nline: ${c.line ?? c.original_line ?? "unknown"}\n<diff-hunk>\n${c.diff_hunk}\n</diff-hunk>\n${c.body}`,
           })
       } else if (t.kind === "issue") {
         const c = issue.find((x) => x.id === t.id)
-        if (c) target.push({ kind: "issue", id: c.id, author: c.user.login, text: c.body })
+        if (c)
+          target.push({
+            kind: "issue",
+            id: c.id,
+            author: c.user.login,
+            body: c.body,
+            location: "Conversation",
+            text: c.body,
+          })
       } else {
         const c = reviews.find((x) => x.id === t.id)
-        if (c && c.body.trim()) target.push({ kind: "review", id: c.id, author: c.user.login, text: `review state: ${c.state}\n${c.body}` })
+        if (c && c.body.trim())
+          target.push({
+            kind: "review",
+            id: c.id,
+            author: c.user.login,
+            body: c.body,
+            location: `Review · ${c.state.toLowerCase().replace("_", " ")}`,
+            text: `review state: ${c.state}\n${c.body}`,
+          })
       }
     }
     if (target.length === 0)
@@ -261,7 +279,7 @@ export async function POST(request: NextRequest) {
         session.skills = skills
         for (const t of target)
           if (!session.targets.some((x) => x.kind === t.kind && x.id === t.id))
-            session.targets.push({ kind: t.kind, id: t.id, author: t.author })
+            session.targets.push({ kind: t.kind, id: t.id, author: t.author, body: t.body, location: t.location })
         await neutralizeEscapingSymlinks(session.id)
 
         const feedback = target
