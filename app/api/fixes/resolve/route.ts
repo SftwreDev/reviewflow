@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getProvider } from "@/lib/llm/index"
+import { getDefaultModel, getProvider } from "@/lib/llm/index"
 import { readCredential } from "@/lib/credentials"
 import { getSkill } from "@/lib/skills"
 import { agentOptions, describeToolUse } from "@/lib/fix-agent"
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
   const skills = Array.isArray(body.skills) ? body.skills.filter((s): s is string => typeof s === "string") : []
   const customPrompt = typeof body.customPrompt === "string" ? body.customPrompt.trim() : ""
   const model =
-    (typeof body.model === "string" && body.model.trim()) || (await readCredential("llm-model")) || (await readCredential("claude-model")) || "claude-sonnet-4-5"
+    (typeof body.model === "string" && body.model.trim()) || (await getDefaultModel()) || "claude-sonnet-4-5"
 
   const activeSkills: { name: string; content: string }[] = []
   for (const name of skills) {

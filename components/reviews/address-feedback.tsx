@@ -84,7 +84,7 @@ interface AddressFeedbackProps {
 }
 
 export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, onReload }: AddressFeedbackProps) {
-  const { user, claudeModel, claudeModels } = useApp()
+  const { user, llmProvider, claudeModel, claudeModels, llmModel } = useApp()
   const [phase, setPhase] = useState<Phase>("idle")
   const [error, setError] = useState("")
   const [logs, setLogs] = useState<string[]>([])
@@ -107,7 +107,8 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
   const [agentReview, setAgentReview] = useState<Review | null>(null)
   const sessionRef = useRef<string | null>(null)
 
-  const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
+  const settingsModel = llmProvider === "claude" ? claudeModel : llmModel
+  const effectiveModel = overrideModel || settingsModel || claudeModels[0]?.value || ""
 
   const refreshWorkspace = useCallback(async () => {
     try {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getProvider } from "@/lib/llm/index"
+import { getDefaultModel, getProvider } from "@/lib/llm/index"
 import { z } from "zod"
 import { readCredential } from "@/lib/credentials"
 import { getSkill } from "@/lib/skills"
@@ -241,7 +241,7 @@ export async function POST(request: NextRequest) {
         .map((s) => `<skill name="${s.name}">\n${s.content}\n</skill>`)
         .join("\n\n")}\n</active-skills>`
     : ""
-  const model = requestedModel || (await readCredential("llm-model")) || (await readCredential("claude-model")) || "claude-sonnet-4-5"
+  const model = requestedModel || (await getDefaultModel()) || "claude-sonnet-4-5"
 
   const abort = new AbortController()
   const encoder = new TextEncoder()

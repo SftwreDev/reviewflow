@@ -80,6 +80,9 @@ export function SpaView() {
   const [openaiKeyInput, setOpenaiKeyInput] = useState("")
   const [openrouterKeyInput, setOpenrouterKeyInput] = useState("")
 
+  const activeModel = llmProvider === "claude" ? claudeModel : llmModel
+  const saveActiveModel = llmProvider === "claude" ? saveClaudeModel : saveLlmModel
+
   const authors = useMemo(() => {
     const counts = new Map<string, number>()
     for (const p of pulls) {
@@ -351,7 +354,10 @@ export function SpaView() {
                 <select
                   id="llm-provider"
                   value={llmProvider}
-                  onChange={(e) => void saveLlmProvider(e.target.value)}
+                  onChange={async (e) => {
+                    await saveLlmProvider(e.target.value)
+                    await refreshClaudeCapabilities()
+                  }}
                   className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50"
                 >
                   <option value="claude">Claude</option>
@@ -380,6 +386,7 @@ export function SpaView() {
                       onClick={async () => {
                         await saveClaudeKey(claudeKeyInput, "claude-save")
                         setClaudeKeyInput("")
+                        await refreshClaudeCapabilities()
                       }}
                       disabled={!claudeKeyInput.trim()}
                     >
@@ -424,6 +431,7 @@ export function SpaView() {
                       onClick={async () => {
                         await saveOpenAIKey(openaiKeyInput, "save")
                         setOpenaiKeyInput("")
+                        await refreshClaudeCapabilities()
                       }}
                       disabled={!openaiKeyInput.trim()}
                     >
@@ -468,6 +476,7 @@ export function SpaView() {
                       onClick={async () => {
                         await saveOpenRouterKey(openrouterKeyInput, "save")
                         setOpenrouterKeyInput("")
+                        await refreshClaudeCapabilities()
                       }}
                       disabled={!openrouterKeyInput.trim()}
                     >
@@ -493,18 +502,43 @@ export function SpaView() {
               )}
 
               <div className="space-y-2 border-t border-border/60 pt-3">
-                <label htmlFor="llm-model" className="text-xs font-medium text-foreground">
-                  Model
-                </label>
-                <Input
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="llm-model" className="text-xs font-medium text-foreground">
+                    Model
+                  </label>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 text-[11px]"
+                    onClick={() => void refreshClaudeCapabilities()}
+                  >
+                    <RefreshCw className="size-3" />
+                    Refresh
+                  </Button>
+                </div>
+                <select
                   id="llm-model"
-                  placeholder="e.g. claude-sonnet-4-5 or gpt-4o"
-                  value={llmModel}
-                  onChange={(e) => void saveLlmModel(e.target.value)}
-                  className="text-xs font-mono"
-                />
+                  value={activeModel}
+                  onChange={(e) => {
+                    const model = e.target.value
+                    if (model) void saveActiveModel(model)
+                  }}
+                  className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-xs font-mono shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50"
+                >
+                  <option value="">Provider default</option>
+                  {activeModel && !claudeModels.some((m) => m.value === activeModel) && (
+                    <option value={activeModel}>{activeModel}</option>
+                  )}
+                  {claudeModels.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.displayName} ({m.value})
+                    </option>
+                  ))}
+                </select>
                 <p className="text-[11px] text-muted-foreground">
-                  Leave blank to use the provider default.
+                  {claudeModels.length > 0
+                    ? `${claudeModels.length} models available from ${llmProvider}.`
+                    : "No models loaded. Save a valid API key, then refresh."}
                 </p>
               </div>
             </CardContent>

@@ -279,7 +279,7 @@ interface RunReviewProps {
 }
 
 export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProps) {
-  const { claudeModel, claudeModels } = useApp()
+  const { llmProvider, claudeModel, claudeModels, llmModel } = useApp()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const [result, setResult] = useState<{ id?: string; headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
@@ -297,7 +297,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [history, setHistory] = useState<Review[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
-  const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
+  const settingsModel = llmProvider === "claude" ? claudeModel : llmModel
+  const effectiveModel = overrideModel || settingsModel || claudeModels[0]?.value || ""
 
   useEffect(() => {
     let active = true
@@ -600,7 +601,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             </select>
             {claudeModels.length === 0 && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                No models loaded. Configure Claude in Settings or refresh capabilities.
+                No models loaded. Configure a provider key in Settings, then refresh.
               </p>
             )}
           </div>

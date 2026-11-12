@@ -19,3 +19,9 @@ export async function getProvider(): Promise<LLMProvider> {
 export async function getProviderName(): Promise<LLMProviderName> {
   return ((await readCredential("llm-provider")) as LLMProviderName | null) ?? "claude"
 }
+
+export async function getDefaultModel(): Promise<string | null> {
+  const providerName = await getProviderName()
+  const preferred = await readCredential(providerName === "claude" ? "claude-model" : "llm-model")
+  return preferred ?? (await readCredential(providerName === "claude" ? "llm-model" : "claude-model"))
+}

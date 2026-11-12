@@ -6,6 +6,49 @@ import path from "node:path"
 import type { LLMProvider, LLMCapabilities, LLMQueryOptions, LLMEvent } from "@/lib/llm"
 import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk"
 
+const MODEL_CACHE_TTL_MS = 60_000
+const modelCache = new Map<string, { at: number; data: LLMCapabilities }>()
+
+type ModelListEntry = {
+  id?: unknown
+  name?: unknown
+  description?: unknown
+  owned_by?: unknown
+}
+
+// OpenAI's /models endpoint also exposes models that cannot drive chat completions.
+// Exclude those so every option in the picker is usable by the review agent.
+function isChatCapable(id: string): boolean {
+  return !/embedding|moderation|whisper|tts|transcrib|dall-e|image|audio|realtime|sora|diariz/i.test(id)
+}
+
+function parseModels(provider: "openai" | "openrouter", payload: unknown): LLMCapabilities["models"] {
+  const data = (payload as { data?: unknown } | null)?.data
+  if (!Array.isArray(data)) return []
+
+  return data
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return []
+      const model = entry as ModelListEntry
+      if (typeof model.id !== "string" || !model.id) return []
+      if (provider === "openai" && !isChatCapable(model.id)) return []
+      const description =
+        typeof model.description === "string" && model.description.trim()
+          ? model.description
+          : typeof model.owned_by === "string" && model.owned_by
+            ? `Owned by ${model.owned_by}`
+            : ""
+      return [
+        {
+          value: model.id,
+          displayName: typeof model.name === "string" && model.name.trim() ? model.name : model.id,
+          description,
+        },
+      ]
+    })
+    .sort((a, b) => a.displayName.localeCompare(b.displayName))
+}
+
 const TOOL_DEFS: ChatCompletionTool[] = [
   {
     type: "function",
@@ -68,11 +111,32 @@ export class OpenAIProvider implements LLMProvider {
     this.apiKey = apiKey
   }
 
-  async getCapabilities(): Promise<LLMCapabilities> {
-    return {
-      models: [],
-      skills: [],
-      auth: { configured: true, device: false, source: "api-key" },
+  async getCapabilities(force = false): Promise<LLMCapabilities> {
+    const cacheKey = `${this.name}:${this.apiKey}`
+    const cached = modelCache.get(cacheKey)
+    if (!force && cached && Date.now() - cached.at < MODEL_CACHE_TTL_MS) return cached.data
+
+    const auth = { configured: true, device: false, source: "api-key" as const }
+    try {
+      const res = await fetch(`${this.baseURL}/models`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!res.ok) throw new Error(`${this.name} returned ${res.status}`)
+      const data: LLMCapabilities = {
+        models: parseModels(this.name, await res.json()),
+        skills: [],
+        auth,
+      }
+      modelCache.set(cacheKey, { at: Date.now(), data })
+      return data
+    } catch (error) {
+      return {
+        models: [],
+        skills: [],
+        auth,
+        error: error instanceof Error ? error.message : `Failed to load ${this.name} models`,
+      }
     }
   }
 
