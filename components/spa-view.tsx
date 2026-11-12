@@ -37,6 +37,7 @@ export function SpaView() {
     user,
     pulls,
     reviewHistory,
+    fixMetrics,
     activeTab,
     activePrId,
     activePrData,
@@ -625,6 +626,9 @@ export function SpaView() {
           <MetricsCards
             totalTokenCost={reviewMetrics.totalTokenCost}
             totalTokens={reviewMetrics.totalTokens}
+            feedbackTokenCost={fixMetrics.totalTokenCost}
+            feedbackTokens={fixMetrics.totalTokens}
+            feedbackRuns={fixMetrics.totalRuns}
             unresolvedPrCount={reviewMetrics.unresolvedPrCount}
             totalReviews={reviewMetrics.totalReviews}
           />

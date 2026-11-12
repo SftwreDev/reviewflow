@@ -295,6 +295,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [bulkPosting, setBulkPosting] = useState(false)
   const [postedUrls, setPostedUrls] = useState<Record<string, string>>({})
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([])
+  const [selectedFindingIndexes, setSelectedFindingIndexes] = useState<number[]>([])
+  const [postNotice, setPostNotice] = useState("")
   const [logs, setLogs] = useState<string[]>([])
   const [history, setHistory] = useState<Review[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -349,6 +351,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     setBusy(true)
     setError("")
     setResult(null)
+    setSelectedFindingIndexes([])
+    setPostNotice("")
     setLogs([])
     try {
       const response = await fetch("/api/reviews", {
@@ -398,12 +402,15 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
           }
         }
         if (finalReview) {
+          const streamedFindings = finalReview.findings || []
           setResult({
             id: finalReview.id,
             headSha: finalReview.headSha || headSha,
-            findings: finalReview.findings || [],
+            findings: streamedFindings,
             appliedSkills: finalReview.skills || selectedSkills,
           })
+          setSelectedFindingIndexes(streamedFindings.map((_, index) => index))
+          setPostNotice("")
           announceNotificationsChanged()
           void loadHistory()
           return
@@ -416,12 +423,15 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         appliedSkills?: string[]
         review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] }
       }
+      const jsonFindings = data.findings || data.review?.findings || []
       setResult({
         id: data.review?.id,
         headSha: data.headSha || data.review?.headSha || headSha,
-        findings: data.findings || data.review?.findings || [],
+        findings: jsonFindings,
         appliedSkills: data.appliedSkills || data.review?.skills || selectedSkills,
       })
+      setSelectedFindingIndexes(jsonFindings.map((_, index) => index))
+      setPostNotice("")
       announceNotificationsChanged()
       void loadHistory()
     } catch (e) {
@@ -453,29 +463,57 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     }
   }
 
-  const postReview = async (reviewId: string, event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES" = "COMMENT") => {
+  const postReview = async (
+    reviewId: string,
+    event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES" = "COMMENT",
+    findingIndexes?: number[]
+  ) => {
     setPostingIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]))
     try {
       const response = await fetch("/api/reviews/post", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reviewId, repo, number, event }),
+        body: JSON.stringify({
+          reviewId,
+          repo,
+          number,
+          event,
+          ...(findingIndexes ? { findingIndexes } : {}),
+        }),
       })
       const data = (await response.json().catch(() => ({}))) as { review?: { html_url?: string }; error?: string }
       if (!response.ok) throw new Error(data.error || `Failed to post review (${response.status})`)
       const url = data.review?.html_url ?? "posted"
-      setPostedUrls((prev) => ({ ...prev, [reviewId]: url }))
+      if (!findingIndexes) setPostedUrls((prev) => ({ ...prev, [reviewId]: url }))
       return url
     } finally {
       setPostingIds((prev) => prev.filter((id) => id !== reviewId))
     }
   }
 
-  const postToPr = async (event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES") => {
+  const postToPr = async (
+    event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES",
+    findingIndexes?: number[]
+  ) => {
     if (!result?.id) return
+    const total = result.findings.length
+    const indexes =
+      findingIndexes && findingIndexes.length > 0 && findingIndexes.length < total
+        ? findingIndexes
+        : undefined
     setError("")
+    setPostNotice("")
     try {
-      await postReview(result.id, event)
+      await postReview(result.id, event, indexes)
+      if (indexes) {
+        setSelectedFindingIndexes((prev) => prev.filter((index) => !indexes.includes(index)))
+        setPostNotice(`Posted ${indexes.length} of ${total} findings to PR.`)
+      } else {
+        setSelectedFindingIndexes([])
+        setPostNotice(
+          total === 0 ? "Posted empty review to PR." : `Posted all ${total} findings to PR.`
+        )
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to post review to PR")
     }
@@ -516,23 +554,33 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     )
   }
 
+  const toggleFindingSelection = (index: number) => {
+    setSelectedFindingIndexes((prev) =>
+      prev.includes(index) ? prev.filter((item) => item !== index) : [...prev, index]
+    )
+  }
+
   const findings = result?.findings || []
   const resultPostedUrl = result?.id ? postedUrls[result.id] : undefined
   const resultPosting = result?.id ? postingIds.includes(result.id) : false
   const selectedUnpostedCount = selectedReviewIds.filter((id) => !postedUrls[id]).length
+  const allFindingsSelected =
+    findings.length > 0 && selectedFindingIndexes.length === findings.length
   const criticalCount = findings.filter((f) => f.severity === "critical").length
   const highCount = findings.filter((f) => f.severity === "high").length
   const mediumCount = findings.filter((f) => f.severity === "medium").length
   const lowCount = findings.filter((f) => f.severity === "low" || f.severity === "info").length
 
-  const filteredFindings = findings.filter((f) => {
-    if (severityFilter === "all") return true
-    if (severityFilter === "critical") return f.severity === "critical"
-    if (severityFilter === "high") return f.severity === "high"
-    if (severityFilter === "medium") return f.severity === "medium"
-    if (severityFilter === "low") return f.severity === "low" || f.severity === "info"
-    return true
-  })
+  const filteredFindings = findings
+    .map((finding, index) => ({ finding, index }))
+    .filter(({ finding }) => {
+      if (severityFilter === "all") return true
+      if (severityFilter === "critical") return finding.severity === "critical"
+      if (severityFilter === "high") return finding.severity === "high"
+      if (severityFilter === "medium") return finding.severity === "medium"
+      if (severityFilter === "low") return finding.severity === "low" || finding.severity === "info"
+      return true
+    })
 
   const getSeverityBadge = (severity: string) => {
     switch (severity.toLowerCase()) {
@@ -764,6 +812,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                           findings: review.findings,
                           appliedSkills: review.skills,
                         })
+                        setSelectedFindingIndexes(review.findings.map((_, index) => index))
+                        setPostNotice("")
                         setLogs([])
                       }}
                       className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
@@ -880,18 +930,35 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                     Posted to PR
                   </a>
                 ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={resultPosting}
-                    onClick={() => void postToPr("COMMENT")}
-                    className="h-7 gap-1.5 text-xs"
-                  >
-                    {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                    {resultPosting ? "Posting..." : "Post to PR"}
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={resultPosting || selectedFindingIndexes.length === 0}
+                      onClick={() => void postToPr("COMMENT", selectedFindingIndexes)}
+                      className="h-7 gap-1.5 text-xs"
+                    >
+                      {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                      {resultPosting ? "Posting..." : `Post selected (${selectedFindingIndexes.length})`}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={resultPosting}
+                      onClick={() => void postToPr("COMMENT")}
+                      className="h-7 gap-1.5 text-xs"
+                    >
+                      {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                      {resultPosting ? "Posting..." : "Post all"}
+                    </Button>
+                  </>
                 )
               ) : null}
+              {postNotice && (
+                <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
+                  {postNotice}
+                </span>
+              )}
             </div>
           </div>
 
@@ -966,18 +1033,42 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             </button>
           </div>
 
+          {findings.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+              <label className="flex cursor-pointer items-center gap-2 font-medium">
+                <Checkbox
+                  checked={allFindingsSelected}
+                  onCheckedChange={(checked) =>
+                    setSelectedFindingIndexes(
+                      checked ? findings.map((_, index) => index) : []
+                    )
+                  }
+                />
+                Select all findings
+              </label>
+              <span className="text-muted-foreground">
+                {selectedFindingIndexes.length} of {findings.length} selected
+              </span>
+            </div>
+          )}
+
           {/* Findings List */}
           {filteredFindings.length > 0 ? (
             <div className="space-y-4">
-              {filteredFindings.map((finding, idx) => (
+              {filteredFindings.map(({ finding, index }) => (
                 <Card
-                  key={`${finding.filePath}-${finding.lineNumber}-${idx}`}
+                  key={`${finding.filePath}-${finding.lineNumber}-${index}`}
                   className="overflow-hidden border-border/70 shadow-xs max-w-full min-w-0"
                 >
                   {/* Finding Header */}
                   <CardHeader className="bg-muted/30 border-b border-border/50 py-3.5 px-5 max-w-full min-w-0">
                     <div className="flex flex-wrap items-center justify-between gap-3 min-w-0">
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <Checkbox
+                          checked={selectedFindingIndexes.includes(index)}
+                          onCheckedChange={() => toggleFindingSelection(index)}
+                          aria-label="Select finding"
+                        />
                         {getSeverityBadge(finding.severity)}
                         <span className="font-bold text-sm text-foreground break-words">{finding.title}</span>
                       </div>
@@ -1044,10 +1135,10 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                         </h4>
                         <button
                           type="button"
-                          onClick={() => copyFix(finding.solution, idx)}
+                          onClick={() => copyFix(finding.solution, index)}
                           className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                         >
-                          {copiedFixIndex === idx ? (
+                          {copiedFixIndex === index ? (
                             <>
                               <Check className="size-3 text-emerald-500" />
                               <span className="text-emerald-500">Copied</span>

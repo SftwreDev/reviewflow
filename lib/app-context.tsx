@@ -38,6 +38,12 @@ export type Pull = {
 
 export type RepoLabel = { name: string; color: string }
 
+export type FixMetrics = {
+  totalTokenCost: number
+  totalTokens: number
+  totalRuns: number
+}
+
 export interface PRDetailData {
   pr?: PullRequestData
   files?: ChangedFile[]
@@ -62,6 +68,8 @@ interface AppContextType {
     createdAt: string
     tokenUsage?: TokenUsage
   }[]
+  fixMetrics: FixMetrics
+  refreshFixMetrics: (targetRepo?: string) => Promise<void>
   activeTab: TabType
   activePrId: number | null
   activePrData: PRDetailData | null
@@ -127,6 +135,11 @@ export function AppProvider({
   const [reviewHistory, setReviewHistory] = useState<
     { number: number; headSha: string; createdAt: string; tokenUsage?: TokenUsage }[]
   >([])
+  const [fixMetrics, setFixMetrics] = useState<FixMetrics>({
+    totalTokenCost: 0,
+    totalTokens: 0,
+    totalRuns: 0,
+  })
   const [claudeModel, setClaudeModel] = useState("")
   const [claudeCodeAuth, setClaudeCodeAuth] = useState(false)
   const [claudeModels, setClaudeModels] = useState<
@@ -264,12 +277,33 @@ export function AppProvider({
     [activePrId]
   )
 
+  const refreshFixMetrics = useCallback(
+    async (targetRepo?: string) => {
+      if (!targetRepo) {
+        setFixMetrics({ totalTokenCost: 0, totalTokens: 0, totalRuns: 0 })
+        return
+      }
+      try {
+        const d = await req(`/api/fixes/metrics?repo=${encodeURIComponent(targetRepo)}`)
+        setFixMetrics({
+          totalTokenCost: d.totalTokenCost ?? 0,
+          totalTokens: d.totalTokens ?? 0,
+          totalRuns: d.totalRuns ?? 0,
+        })
+      } catch {
+        // Metrics are best-effort.
+      }
+    },
+    [req]
+  )
+
   const selectRepo = useCallback(
     async (repoName: string) => {
       setRepo(repoName)
       try {
         await req("/api/settings", { action: "repo", repo: repoName })
         await loadPullsForRepo(repoName)
+        await refreshFixMetrics(repoName)
         setStatus(`Active repository set to ${repoName}`)
         setStatusType("success")
       } catch (e) {
@@ -277,7 +311,7 @@ export function AppProvider({
         setStatusType("error")
       }
     },
-    [req, loadPullsForRepo]
+    [req, loadPullsForRepo, refreshFixMetrics]
   )
 
   const refreshPulls = useCallback(async () => {
@@ -504,6 +538,7 @@ export function AppProvider({
 
         if (activeRepoName) {
           void loadPullsForRepo(activeRepoName)
+          void refreshFixMetrics(activeRepoName)
         }
 
         if (initialPrId && activeRepoName) {
@@ -527,7 +562,7 @@ export function AppProvider({
       mounted = false
       clearTimeout(timer)
     }
-  }, [initialPrId, initialRepo, loadPrData, loadPullsForRepo, req, refreshClaudeCapabilities])
+  }, [initialPrId, initialRepo, loadPrData, loadPullsForRepo, refreshFixMetrics, req, refreshClaudeCapabilities])
 
   // Handle browser Back / Forward buttons (popstate)
   useEffect(() => {
@@ -568,6 +603,8 @@ export function AppProvider({
         pulls,
         repoLabels,
         reviewHistory,
+        fixMetrics,
+        refreshFixMetrics,
         activeTab,
         activePrId,
         activePrData,

@@ -6,7 +6,8 @@ import { getSkill } from "@/lib/skills"
 import { ghRest } from "@/lib/github-rest"
 import { agentOptions, describeToolUse } from "@/lib/fix-agent"
 import { getReview } from "@/lib/reviews-store"
-import { agentFindingBody, parseAgentFeedbackId } from "@/lib/review-types"
+import { agentFindingBody, parseAgentFeedbackId, type TokenUsage } from "@/lib/review-types"
+import { recordFixUsage } from "@/lib/fix-usage"
 import {
   REPO_RE,
   assertNotMerging,
@@ -330,6 +331,7 @@ ${feedback}`
           outputFormat: { type: "json_schema", schema: responseSchema },
         })
         let output: unknown
+        let tokenUsage: TokenUsage | undefined
         for await (const message of events) {
           if (message.type === "assistant") {
             for (const block of message.message.content) {
@@ -338,10 +340,12 @@ ${feedback}`
             }
           } else if (message.type === "result" && message.subtype === "success") {
             output = message.structured_output
+            tokenUsage = message.usage
           } else if (message.type === "error") {
             throw new Error(message.error)
           }
         }
+        await recordFixUsage({ repo, number, model, usage: tokenUsage }).catch(() => {})
         if (!output) throw new Error("Claude returned no structured result")
         const validated = resultSchema.parse(output)
         // Only keep results for items we actually asked about. Normalize ids first: the model can

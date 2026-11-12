@@ -1,17 +1,22 @@
 "use client"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Coins, MessageSquareWarning } from "lucide-react"
 
 export function MetricsCards({
   totalTokenCost,
   totalTokens,
+  feedbackTokenCost,
+  feedbackTokens,
+  feedbackRuns,
   unresolvedPrCount,
   totalReviews,
 }: {
   totalTokenCost: number
   totalTokens: number
+  feedbackTokenCost: number
+  feedbackTokens: number
+  feedbackRuns: number
   unresolvedPrCount: number
   totalReviews: number
 }) {
@@ -30,6 +35,23 @@ export function MetricsCards({
         <CardContent className="pt-0">
           <p className="text-[11px] text-muted-foreground">
             {totalTokens.toLocaleString()} tokens across {totalReviews} review{totalReviews === 1 ? "" : "s"}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/70 shadow-xs">
+        <CardHeader className="pb-2">
+          <CardDescription className="flex items-center gap-1.5 text-xs">
+            <Coins className="size-3.5 text-primary" />
+            Address Feedback Cost
+          </CardDescription>
+          <CardTitle className="text-2xl font-semibold tabular-nums">
+            ${feedbackTokenCost.toFixed(4)}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <p className="text-[11px] text-muted-foreground">
+            {feedbackTokens.toLocaleString()} tokens across {feedbackRuns} run{feedbackRuns === 1 ? "" : "s"}
           </p>
         </CardContent>
       </Card>

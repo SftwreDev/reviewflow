@@ -84,7 +84,7 @@ interface AddressFeedbackProps {
 }
 
 export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, onReload }: AddressFeedbackProps) {
-  const { user, llmProvider, claudeModel, claudeModels, llmModel } = useApp()
+  const { user, llmProvider, claudeModel, claudeModels, llmModel, refreshFixMetrics } = useApp()
   const [phase, setPhase] = useState<Phase>("idle")
   const [error, setError] = useState("")
   const [logs, setLogs] = useState<string[]>([])
@@ -365,6 +365,8 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fix agent failed")
       setPhase("idle")
+    } finally {
+      void refreshFixMetrics(repo)
     }
   }
 

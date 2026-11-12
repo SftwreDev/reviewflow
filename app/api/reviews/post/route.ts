@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
     repo?: unknown
     number?: unknown
     event?: unknown
+    findingIndexes?: unknown
   } | null
   if (
     !body ||
@@ -41,6 +42,20 @@ export async function POST(request: NextRequest) {
   if (review.repo !== body.repo || review.number !== body.number)
     return NextResponse.json({ error: "Review does not belong to this pull request" }, { status: 400 })
 
+  let findings = review.findings
+  if (body.findingIndexes !== undefined) {
+    if (
+      !Array.isArray(body.findingIndexes) ||
+      body.findingIndexes.length === 0 ||
+      !body.findingIndexes.every(
+        (index) => Number.isInteger(index) && index >= 0 && index < review.findings.length
+      )
+    )
+      return NextResponse.json({ error: "Invalid finding selection" }, { status: 400 })
+    const indexes = [...new Set(body.findingIndexes as number[])].sort((a, b) => a - b)
+    findings = indexes.map((index) => review.findings[index])
+  }
+
   const token = await readCredential("github-token")
   if (!token) return NextResponse.json({ error: "GitHub token not configured" }, { status: 401 })
 
@@ -52,7 +67,7 @@ export async function POST(request: NextRequest) {
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ event, body: formatReviewBody(review.findings) }),
+    body: JSON.stringify({ event, body: formatReviewBody(findings) }),
   })
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { message?: string }
