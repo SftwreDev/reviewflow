@@ -18,6 +18,12 @@ export type TokenUsage = {
   totalCostUsd: number
 }
 
+export type ReviewPost = {
+  url: string
+  at: string
+  findingIndexes: number[]
+}
+
 export type Review = {
   id: string
   repo: string
@@ -28,6 +34,7 @@ export type Review = {
   customPrompt: string
   findings: Finding[]
   tokenUsage?: TokenUsage
+  posted?: ReviewPost
   createdAt: string
 }
 

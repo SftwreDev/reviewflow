@@ -58,3 +58,21 @@ export async function getReview(id: string): Promise<Review | null> {
     return null
   }
 }
+
+export async function markReviewPosted(review: Review, indexes: number[], url: string): Promise<Review> {
+  const findingIndexes = [...new Set([...(review.posted?.findingIndexes ?? []), ...indexes])].sort(
+    (a, b) => a - b
+  )
+  const record: Review = {
+    ...review,
+    posted: {
+      url: url || review.posted?.url || "",
+      at: new Date().toISOString(),
+      findingIndexes,
+    },
+  }
+  await writeFile(path.join(directory, `${record.id}.json`), JSON.stringify(record, null, 2), {
+    mode: 0o600,
+  })
+  return record
+}

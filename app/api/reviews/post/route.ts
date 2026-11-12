@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { readCredential } from "@/lib/credentials"
-import { getReview } from "@/lib/reviews-store"
+import { getReview, markReviewPosted } from "@/lib/reviews-store"
 import { sameOrigin } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
   if (review.repo !== body.repo || review.number !== body.number)
     return NextResponse.json({ error: "Review does not belong to this pull request" }, { status: 400 })
 
-  let findings = review.findings
+  let selectedIndexes = review.findings.map((_, index) => index)
   if (body.findingIndexes !== undefined) {
     if (
       !Array.isArray(body.findingIndexes) ||
@@ -52,9 +52,22 @@ export async function POST(request: NextRequest) {
       )
     )
       return NextResponse.json({ error: "Invalid finding selection" }, { status: 400 })
-    const indexes = [...new Set(body.findingIndexes as number[])].sort((a, b) => a - b)
-    findings = indexes.map((index) => review.findings[index])
+    selectedIndexes = [...new Set(body.findingIndexes as number[])].sort((a, b) => a - b)
   }
+
+  const alreadyPosted =
+    review.findings.length === 0
+      ? Boolean(review.posted)
+      : Boolean(review.posted) &&
+        selectedIndexes.some((index) => review.posted!.findingIndexes.includes(index))
+  if (alreadyPosted) {
+    return NextResponse.json(
+      { error: "Selected findings were already posted to this PR", posted: review.posted },
+      { status: 409 }
+    )
+  }
+
+  const findings = selectedIndexes.map((index) => review.findings[index])
 
   const token = await readCredential("github-token")
   if (!token) return NextResponse.json({ error: "GitHub token not configured" }, { status: 401 })
@@ -76,6 +89,16 @@ export async function POST(request: NextRequest) {
       { status: res.status }
     )
   }
-  const posted = await res.json()
-  return NextResponse.json({ review: posted })
+  const posted = (await res.json()) as { html_url?: string }
+  const url = posted.html_url ?? ""
+  const updated = await markReviewPosted(review, selectedIndexes, url).catch(() => null)
+  return NextResponse.json({
+    review: posted,
+    posted:
+      updated?.posted ?? {
+        url,
+        at: new Date().toISOString(),
+        findingIndexes: selectedIndexes,
+      },
+  })
 }

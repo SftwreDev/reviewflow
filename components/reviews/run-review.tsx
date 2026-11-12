@@ -31,9 +31,26 @@ import { cn } from "@/lib/utils"
 import { useApp } from "@/lib/app-context"
 import { announceNotificationsChanged } from "@/lib/notification-types"
 
-import type { Finding, Review } from "@/lib/review-types"
+import type { Finding, Review, ReviewPost } from "@/lib/review-types"
 
 export type { Finding }
+
+function postedIndexSet(posted?: ReviewPost) {
+  return new Set(posted?.findingIndexes ?? [])
+}
+
+function remainingFindingIndexes(findings: Finding[], posted?: ReviewPost) {
+  if (!posted) return findings.map((_, index) => index)
+  const postedIndexes = postedIndexSet(posted)
+  return findings.map((_, index) => index).filter((index) => !postedIndexes.has(index))
+}
+
+function isReviewFullyPosted(findings: Finding[], posted?: ReviewPost) {
+  if (!posted) return false
+  if (findings.length === 0) return true
+  const postedIndexes = postedIndexSet(posted)
+  return findings.every((_, index) => postedIndexes.has(index))
+}
 
 interface SkillsMultiSelectProps {
   skills: { name: string; description: string }[]
@@ -282,7 +299,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const { llmProvider, claudeModel, claudeModels, llmModel } = useApp()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const [result, setResult] = useState<{ id?: string; headSha: string; findings: Finding[]; appliedSkills?: string[] } | null>(null)
+  const [result, setResult] = useState<{ id?: string; headSha: string; findings: Finding[]; appliedSkills?: string[]; posted?: ReviewPost } | null>(null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
   const [copiedReview, setCopiedReview] = useState(false)
@@ -293,7 +310,6 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [overrideModel, setOverrideModel] = useState<string>("")
   const [postingIds, setPostingIds] = useState<string[]>([])
   const [bulkPosting, setBulkPosting] = useState(false)
-  const [postedUrls, setPostedUrls] = useState<Record<string, string>>({})
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([])
   const [selectedFindingIndexes, setSelectedFindingIndexes] = useState<number[]>([])
   const [postNotice, setPostNotice] = useState("")
@@ -371,7 +387,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         if (!reader) throw new Error("Review stream unavailable")
         const decoder = new TextDecoder()
         let buffer = ""
-        let finalReview: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] } | null = null
+        let finalReview: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[]; posted?: ReviewPost } | null = null
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
@@ -384,7 +400,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               const parsed = JSON.parse(line) as {
                 type?: string
                 message?: unknown
-                review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] }
+                review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[]; posted?: ReviewPost }
                 error?: string
               }
               if (parsed.type === "log") {
@@ -408,8 +424,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             headSha: finalReview.headSha || headSha,
             findings: streamedFindings,
             appliedSkills: finalReview.skills || selectedSkills,
+            posted: finalReview.posted,
           })
-          setSelectedFindingIndexes(streamedFindings.map((_, index) => index))
+          setSelectedFindingIndexes(remainingFindingIndexes(streamedFindings, finalReview.posted))
           setPostNotice("")
           announceNotificationsChanged()
           void loadHistory()
@@ -421,7 +438,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         headSha?: string
         findings?: Finding[]
         appliedSkills?: string[]
-        review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[] }
+        review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[]; posted?: ReviewPost }
       }
       const jsonFindings = data.findings || data.review?.findings || []
       setResult({
@@ -429,8 +446,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         headSha: data.headSha || data.review?.headSha || headSha,
         findings: jsonFindings,
         appliedSkills: data.appliedSkills || data.review?.skills || selectedSkills,
+        posted: data.review?.posted,
       })
-      setSelectedFindingIndexes(jsonFindings.map((_, index) => index))
+      setSelectedFindingIndexes(remainingFindingIndexes(jsonFindings, data.review?.posted))
       setPostNotice("")
       announceNotificationsChanged()
       void loadHistory()
@@ -467,7 +485,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     reviewId: string,
     event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES" = "COMMENT",
     findingIndexes?: number[]
-  ) => {
+  ): Promise<ReviewPost | undefined> => {
     setPostingIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]))
     try {
       const response = await fetch("/api/reviews/post", {
@@ -481,11 +499,13 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
           ...(findingIndexes ? { findingIndexes } : {}),
         }),
       })
-      const data = (await response.json().catch(() => ({}))) as { review?: { html_url?: string }; error?: string }
+      const data = (await response.json().catch(() => ({}))) as {
+        review?: { html_url?: string }
+        posted?: ReviewPost
+        error?: string
+      }
       if (!response.ok) throw new Error(data.error || `Failed to post review (${response.status})`)
-      const url = data.review?.html_url ?? "posted"
-      if (!findingIndexes) setPostedUrls((prev) => ({ ...prev, [reviewId]: url }))
-      return url
+      return data.posted
     } finally {
       setPostingIds((prev) => prev.filter((id) => id !== reviewId))
     }
@@ -493,57 +513,66 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
 
   const postToPr = async (
     event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES",
-    findingIndexes?: number[]
+    findingIndexes: number[]
   ) => {
     if (!result?.id) return
-    const total = result.findings.length
-    const indexes =
-      findingIndexes && findingIndexes.length > 0 && findingIndexes.length < total
-        ? findingIndexes
-        : undefined
+    const postedIndexes = postedIndexSet(result.posted)
+    const indexes = findingIndexes.filter((index) => !postedIndexes.has(index))
+    if (indexes.length === 0) return
     setError("")
     setPostNotice("")
     try {
-      await postReview(result.id, event, indexes)
-      if (indexes) {
-        setSelectedFindingIndexes((prev) => prev.filter((index) => !indexes.includes(index)))
-        setPostNotice(`Posted ${indexes.length} of ${total} findings to PR.`)
-      } else {
-        setSelectedFindingIndexes([])
-        setPostNotice(
-          total === 0 ? "Posted empty review to PR." : `Posted all ${total} findings to PR.`
-        )
-      }
+      const posted = await postReview(result.id, event, indexes)
+      if (!posted) throw new Error("Review was posted but its status was not saved")
+      setResult((prev) => (prev ? { ...prev, posted } : prev))
+      setHistory((prev) => prev.map((review) => (review.id === result.id ? { ...review, posted } : review)))
+      setSelectedFindingIndexes((prev) => prev.filter((index) => !indexes.includes(index)))
+      setPostNotice(`Posted ${indexes.length} finding${indexes.length === 1 ? "" : "s"} to PR.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to post review to PR")
     }
   }
 
-  const postSingleReview = async (reviewId: string) => {
+  const postSingleReview = async (review: Review) => {
+    const indexes = remainingFindingIndexes(review.findings, review.posted)
+    if (indexes.length === 0) return
     setError("")
     try {
-      await postReview(reviewId)
+      const posted = await postReview(review.id, "COMMENT", indexes)
+      if (!posted) throw new Error("Review was posted but its status was not saved")
+      setHistory((prev) => prev.map((item) => (item.id === review.id ? { ...item, posted } : item)))
+      setResult((prev) => (prev?.id === review.id ? { ...prev, posted } : prev))
+      if (result?.id === review.id) {
+        setSelectedFindingIndexes((prev) => prev.filter((index) => !indexes.includes(index)))
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to post review to PR")
     }
   }
 
   const postSelectedReviews = async () => {
-    const ids = selectedReviewIds.filter((id) => !postedUrls[id])
-    if (ids.length === 0) return
+    const targets = selectedReviewIds.flatMap((id) => {
+      const review = history.find((item) => item.id === id)
+      if (!review) return []
+      const indexes = remainingFindingIndexes(review.findings, review.posted)
+      return indexes.length > 0 ? [{ review, indexes }] : []
+    })
+    if (targets.length === 0) return
     setBulkPosting(true)
     setError("")
     const failed: string[] = []
-    for (const id of ids) {
+    for (const { review, indexes } of targets) {
       try {
-        await postReview(id)
+        const posted = await postReview(review.id, "COMMENT", indexes)
+        if (!posted) throw new Error("Review was posted but its status was not saved")
+        setHistory((prev) => prev.map((item) => (item.id === review.id ? { ...item, posted } : item)))
       } catch {
-        failed.push(id)
+        failed.push(review.id)
       }
     }
     setSelectedReviewIds(failed)
     if (failed.length > 0) {
-      setError(`Failed to post ${failed.length} of ${ids.length} selected review${ids.length === 1 ? "" : "s"}.`)
+      setError(`Failed to post ${failed.length} of ${targets.length} selected review${targets.length === 1 ? "" : "s"}.`)
     }
     setBulkPosting(false)
   }
@@ -555,17 +584,25 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   }
 
   const toggleFindingSelection = (index: number) => {
+    if (resultPostedIndexes.has(index)) return
     setSelectedFindingIndexes((prev) =>
       prev.includes(index) ? prev.filter((item) => item !== index) : [...prev, index]
     )
   }
 
   const findings = result?.findings || []
-  const resultPostedUrl = result?.id ? postedUrls[result.id] : undefined
+  const resultPosted = result?.posted
+  const resultPostedIndexes = postedIndexSet(resultPosted)
+  const resultFullyPosted = isReviewFullyPosted(findings, resultPosted)
   const resultPosting = result?.id ? postingIds.includes(result.id) : false
-  const selectedUnpostedCount = selectedReviewIds.filter((id) => !postedUrls[id]).length
+  const remainingFindings = remainingFindingIndexes(findings, resultPosted)
+  const selectableReviewIds = history
+    .filter((review) => remainingFindingIndexes(review.findings, review.posted).length > 0)
+    .map((review) => review.id)
+  const selectedUnpostedCount = selectedReviewIds.filter((id) => selectableReviewIds.includes(id)).length
   const allFindingsSelected =
-    findings.length > 0 && selectedFindingIndexes.length === findings.length
+    remainingFindings.length > 0 &&
+    remainingFindings.every((index) => selectedFindingIndexes.includes(index))
   const criticalCount = findings.filter((f) => f.severity === "critical").length
   const highCount = findings.filter((f) => f.severity === "high").length
   const mediumCount = findings.filter((f) => f.severity === "medium").length
@@ -779,19 +816,26 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
               <div className="flex items-center justify-between gap-2 pb-1">
                 <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
                   <Checkbox
-                    checked={history.every((review) => selectedReviewIds.includes(review.id))}
+                    checked={
+                      selectableReviewIds.length > 0 &&
+                      selectableReviewIds.every((id) => selectedReviewIds.includes(id))
+                    }
+                    disabled={selectableReviewIds.length === 0}
                     onCheckedChange={(checked) =>
-                      setSelectedReviewIds(checked ? history.map((review) => review.id) : [])
+                      setSelectedReviewIds(checked ? selectableReviewIds : [])
                     }
                   />
                   Select all
                 </label>
                 <span className="text-[11px] text-muted-foreground">
-                  {selectedReviewIds.length} selected
+                  {selectedUnpostedCount} selected
                 </span>
               </div>
               {history.map((review) => {
-                const posted = postedUrls[review.id]
+                const posted = review.posted
+                const postedUrl = posted?.url
+                const remaining = remainingFindingIndexes(review.findings, review.posted)
+                const fullyPosted = isReviewFullyPosted(review.findings, review.posted)
                 const isPosting = postingIds.includes(review.id)
                 return (
                   <div
@@ -800,6 +844,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                   >
                     <Checkbox
                       checked={selectedReviewIds.includes(review.id)}
+                      disabled={remaining.length === 0}
                       onCheckedChange={() => toggleReviewSelection(review.id)}
                       aria-label="Select review"
                     />
@@ -811,8 +856,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                           headSha: review.headSha,
                           findings: review.findings,
                           appliedSkills: review.skills,
+                          posted: review.posted,
                         })
-                        setSelectedFindingIndexes(review.findings.map((_, index) => index))
+                        setSelectedFindingIndexes(remainingFindingIndexes(review.findings, review.posted))
                         setPostNotice("")
                         setLogs([])
                       }}
@@ -825,30 +871,33 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                         {review.model} · {review.findings.length} findings
                       </span>
                     </button>
-                    {posted ? (
+                    {posted && (
                       <a
-                        href={posted.startsWith("http") ? posted : undefined}
+                        href={postedUrl?.startsWith("http") ? postedUrl : undefined}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
                       >
                         <Check className="size-3" />
-                        Posted
+                        {fullyPosted
+                          ? "Posted"
+                          : `Posted ${posted.findingIndexes.length}/${review.findings.length}`}
                       </a>
-                    ) : (
+                    )}
+                    {remaining.length > 0 && (
                       <Button
                         variant="outline"
                         size="sm"
                         className="h-7 shrink-0 gap-1.5 text-[11px]"
                         disabled={isPosting || bulkPosting}
-                        onClick={() => void postSingleReview(review.id)}
+                        onClick={() => void postSingleReview(review)}
                       >
                         {isPosting ? (
                           <LoaderCircle className="size-3 animate-spin" />
                         ) : (
                           <Send className="size-3" />
                         )}
-                        {isPosting ? "Posting..." : "Post"}
+                        {isPosting ? "Posting..." : `Post (${remaining.length})`}
                       </Button>
                     )}
                   </div>
@@ -919,18 +968,21 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                 {copiedReview ? "Copied" : "Copy Results"}
               </Button>
               {result.id ? (
-                resultPostedUrl ? (
-                  <a
-                    href={resultPostedUrl.startsWith("http") ? resultPostedUrl : undefined}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
-                  >
-                    <Check className="size-3.5" />
-                    Posted to PR
-                  </a>
-                ) : (
-                  <>
+                <>
+                  {resultPosted && (
+                    <a
+                      href={resultPosted.url.startsWith("http") ? resultPosted.url : undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
+                    >
+                      <Check className="size-3.5" />
+                      {resultFullyPosted
+                        ? "Posted to PR"
+                        : `Partially posted (${resultPosted.findingIndexes.length}/${findings.length})`}
+                    </a>
+                  )}
+                  {!resultFullyPosted && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -941,8 +993,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                       {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
                       {resultPosting ? "Posting..." : `Post selected (${selectedFindingIndexes.length})`}
                     </Button>
-                  </>
-                )
+                  )}
+                </>
               ) : null}
               {postNotice && (
                 <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
@@ -1023,21 +1075,19 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             </button>
           </div>
 
-          {findings.length > 0 && (
+          {remainingFindings.length > 0 && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs">
               <label className="flex cursor-pointer items-center gap-2 font-medium">
                 <Checkbox
                   checked={allFindingsSelected}
                   onCheckedChange={(checked) =>
-                    setSelectedFindingIndexes(
-                      checked ? findings.map((_, index) => index) : []
-                    )
+                    setSelectedFindingIndexes(checked ? remainingFindings : [])
                   }
                 />
-                Select all findings
+                Select all unposted findings
               </label>
               <span className="text-muted-foreground">
-                {selectedFindingIndexes.length} of {findings.length} selected
+                {selectedFindingIndexes.length} of {remainingFindings.length} selected
               </span>
             </div>
           )}
@@ -1056,11 +1106,20 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <Checkbox
                           checked={selectedFindingIndexes.includes(index)}
+                          disabled={resultPostedIndexes.has(index)}
                           onCheckedChange={() => toggleFindingSelection(index)}
                           aria-label="Select finding"
                         />
                         {getSeverityBadge(finding.severity)}
                         <span className="font-bold text-sm text-foreground break-words">{finding.title}</span>
+                        {resultPostedIndexes.has(index) && (
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-500/40 bg-emerald-500/10 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"
+                          >
+                            Posted
+                          </Badge>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
