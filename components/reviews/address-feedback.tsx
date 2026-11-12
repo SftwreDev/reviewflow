@@ -10,6 +10,7 @@ import {
   LoaderCircle,
   RefreshCw,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
   Wrench,
 } from "lucide-react"
@@ -26,14 +27,16 @@ import type { PullRequestData } from "@/components/pull-requests/pr-header"
 import type { IssueCommentData, ReviewData } from "@/components/pull-requests/pr-overview"
 import type { InlineComment } from "@/components/pull-requests/diff-viewer"
 import { useApp } from "@/lib/app-context"
+import { agentFeedbackId, agentFindingBody, type Review } from "@/lib/review-types"
 import { cn } from "@/lib/utils"
 
-type Kind = "inline" | "issue" | "review"
-type Item = { key: string; kind: Kind; id: number; author: string; body: string; location?: string }
-type FixResult = { kind: Kind; id: number; status: "fixed" | "partial" | "declined"; reply: string }
+type Kind = "inline" | "issue" | "review" | "agent"
+type FeedbackId = number | string
+type Item = { key: string; kind: Kind; id: FeedbackId; author: string; body: string; location?: string }
+type FixResult = { kind: Kind; id: FeedbackId; status: "fixed" | "partial" | "declined"; reply: string }
 type AddressedRecord = {
   kind: Kind
-  id: number
+  id: FeedbackId
   author: string
   body: string
   location?: string
@@ -62,7 +65,7 @@ type Workspace = {
 }
 type BusyAction = "approve" | "discard" | "sync" | "push" | "discardAll"
 
-const keyOf = (kind: Kind, id: number) => `${kind}:${id}`
+const keyOf = (kind: Kind, id: FeedbackId) => `${kind}:${id}`
 
 const STATUS_STYLES: Record<FixResult["status"], string> = {
   fixed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
@@ -99,6 +102,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState("")
   const [addressed, setAddressed] = useState<AddressedRecord[]>([])
+  const [agentReview, setAgentReview] = useState<Review | null>(null)
   const sessionRef = useRef<string | null>(null)
 
   const effectiveModel = overrideModel || claudeModel || claudeModels[0]?.value || ""
@@ -132,7 +136,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
 
   const items = useMemo<Item[]>(() => {
     const list: Item[] = []
-    const addressedItem = (kind: Kind, id: number, body: string) => {
+    const addressedItem = (kind: Kind, id: FeedbackId, body: string) => {
       const record = addressedByKey.get(keyOf(kind, id))
       return Boolean(record && record.body === body)
     }
@@ -176,8 +180,23 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       if (addressedItem("issue", c.id, c.body)) continue
       list.push({ key: keyOf("issue", c.id), kind: "issue", id: c.id, author: c.user.login, body: c.body, location: "Conversation" })
     }
+    if (agentReview) {
+      agentReview.findings.forEach((finding, index) => {
+        const id = agentFeedbackId(agentReview.id, index)
+        const body = agentFindingBody(finding)
+        if (addressedItem("agent", id, body)) return
+        list.push({
+          key: keyOf("agent", id),
+          kind: "agent",
+          id,
+          author: "Agent Review",
+          body,
+          location: `${finding.filePath}${finding.lineNumber ? `:${finding.lineNumber}` : ""}`,
+        })
+      })
+    }
     return list
-  }, [reviewComments, reviews, comments, user, addressedByKey])
+  }, [reviewComments, reviews, comments, user, addressedByKey, agentReview])
 
   const [selected, setSelected] = useState<Set<string> | null>(null)
   const selectedKeys = useMemo(() => selected ?? new Set(items.map((i) => i.key)), [selected, items])
@@ -199,7 +218,22 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
 
   useEffect(() => {
     let active = true
-    fetch("/api/skills")
+    fetch(`/api/reviews?repo=${encodeURIComponent(repo)}&number=${pr.number}`)
+      .then((response) => (response.ok ? response.json() : { reviews: [] }))
+      .then((data: { reviews?: Review[] }) => {
+        if (active) setAgentReview(Array.isArray(data.reviews) ? (data.reviews[0] ?? null) : null)
+      })
+      .catch(() => {
+        if (active) setAgentReview(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [repo, pr.number])
+
+  useEffect(() => {
+    let active = true
+    fetch(`/api/skills`)
       .then((r) => r.json())
       .then((d) => {
         if (active && Array.isArray(d.skills)) setSkills(d.skills)
@@ -496,7 +530,14 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
                   <Badge className={cn("text-[10px] font-semibold uppercase", STATUS_STYLES[record.status])}>
                     {record.status}
                   </Badge>
-                  <span className="font-semibold">@{record.author}</span>
+                  {record.kind === "agent" ? (
+                    <Badge className="gap-1 border-primary/30 bg-primary/10 text-[10px] font-semibold text-primary">
+                      <Sparkles className="size-3" />
+                      In-house Agent Review
+                    </Badge>
+                  ) : (
+                    <span className="font-semibold">@{record.author}</span>
+                  )}
                   {record.location && (
                     <code className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{record.location}</code>
                   )}
@@ -599,7 +640,14 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
                     <Checkbox checked={selectedKeys.has(item.key)} disabled={running} onCheckedChange={() => toggle(item.key)} className="mt-0.5" />
                     <div className="min-w-0 space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-foreground">@{item.author}</span>
+                        {item.kind === "agent" ? (
+                          <Badge className="gap-1 border-primary/30 bg-primary/10 text-[10px] font-semibold text-primary">
+                            <Sparkles className="size-3" />
+                            In-house Agent Review
+                          </Badge>
+                        ) : (
+                          <span className="font-semibold text-foreground">@{item.author}</span>
+                        )}
                         {item.location && <code className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[10px]">{item.location}</code>}
                       </div>
                       <p className="whitespace-pre-wrap break-words text-muted-foreground line-clamp-4">{item.body}</p>

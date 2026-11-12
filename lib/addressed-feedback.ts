@@ -7,8 +7,8 @@ const ADDRESSED_DIR = path.join(ROOT, "addressed-feedback")
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/
 
 const recordSchema = z.object({
-  kind: z.enum(["inline", "issue", "review"]),
-  id: z.number().int(),
+  kind: z.enum(["inline", "issue", "review", "agent"]),
+  id: z.union([z.number().int(), z.string()]),
   author: z.string(),
   /** Comment body at the time it was addressed. Used to detect later edits. */
   body: z.string(),

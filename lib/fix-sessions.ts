@@ -18,15 +18,16 @@ const CONFLICT_MARKER_RE = /^(<{7}|>{7})( |$)/m
 export const REPO_RE = /^[\w.-]+\/[\w.-]+$/
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-export type FeedbackKind = "inline" | "issue" | "review"
+export type FeedbackKind = "inline" | "issue" | "review" | "agent"
+export type FeedbackId = number | string
 export type FixResult = {
   kind: FeedbackKind
-  id: number
+  id: FeedbackId
   status: "fixed" | "partial" | "declined"
   reply: string
 }
-export type QueuedReply = { kind: FeedbackKind; id: number; body: string; status: FixResult["status"] }
-export type QueuedAddressed = { kind: FeedbackKind; id: number; status: FixResult["status"] }
+export type QueuedReply = { kind: FeedbackKind; id: FeedbackId; body: string; status: FixResult["status"] }
+export type QueuedAddressed = { kind: FeedbackKind; id: FeedbackId; status: FixResult["status"] }
 export type QueuedCommit = {
   sha: string
   message: string
@@ -51,7 +52,7 @@ export type FixSession = {
   createdAt: string
   model: string
   skills: string[]
-  targets: { kind: FeedbackKind; id: number; author: string; body?: string; location?: string }[]
+  targets: { kind: FeedbackKind; id: FeedbackId; author: string; body?: string; location?: string }[]
   summary: string
   results: FixResult[]
   queue: QueuedCommit[]

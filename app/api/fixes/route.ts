@@ -6,6 +6,8 @@ import { hasClaudeCodeAuth } from "@/lib/claude"
 import { getSkill } from "@/lib/skills"
 import { ghRest } from "@/lib/github-rest"
 import { agentOptions, describeToolUse } from "@/lib/fix-agent"
+import { getReview } from "@/lib/reviews-store"
+import { agentFindingBody, parseAgentFeedbackId } from "@/lib/review-types"
 import {
   REPO_RE,
   assertNotMerging,
@@ -31,8 +33,8 @@ const resultSchema = z.object({
   summary: z.string(),
   results: z.array(
     z.object({
-      kind: z.enum(["inline", "issue", "review"]),
-      id: z.number().int(),
+      kind: z.enum(["inline", "issue", "review", "agent"]),
+      id: z.union([z.number().int(), z.string()]),
       status: z.enum(["fixed", "partial", "declined"]),
       reply: z.string(),
     })
@@ -47,8 +49,8 @@ const responseSchema = {
       items: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["inline", "issue", "review"] },
-          id: { type: "integer" },
+          kind: { type: "string", enum: ["inline", "issue", "review", "agent"] },
+          id: { anyOf: [{ type: "integer" }, { type: "string" }] },
           status: { type: "string", enum: ["fixed", "partial", "declined"] },
           reply: { type: "string" },
         },
@@ -73,7 +75,7 @@ type GhPr = {
 type GhInline = { id: number; user: { login: string }; body: string; path: string; line: number | null; original_line: number | null; diff_hunk: string; in_reply_to_id?: number }
 type GhIssue = { id: number; user: { login: string }; body: string }
 type GhReview = { id: number; user: { login: string }; body: string; state: string }
-type Target = { kind: FeedbackKind; id: number; author: string; text: string; body: string; location?: string }
+type Target = { kind: FeedbackKind; id: number | string; author: string; text: string; body: string; location?: string }
 
 /** Current workspace for a PR (if any): queued commits, merge/conflict state, uncommitted changes. */
 export async function GET(request: NextRequest) {
@@ -113,11 +115,13 @@ export async function POST(request: NextRequest) {
   const repo = body.repo
   const number = body.number
   const requested = body.targets.filter(
-    (t): t is { kind: FeedbackKind; id: number } =>
+    (t): t is { kind: FeedbackKind; id: number | string } =>
       Boolean(t) &&
       typeof t === "object" &&
-      ["inline", "issue", "review"].includes(t.kind) &&
-      Number.isInteger(t.id)
+      ["inline", "issue", "review", "agent"].includes(t.kind) &&
+      (t.kind === "agent"
+        ? typeof t.id === "string" && t.id.length > 0 && t.id.length <= 100
+        : Number.isInteger(t.id))
   )
   if (requested.length === 0 || requested.length > MAX_TARGETS)
     return NextResponse.json({ error: `Select between 1 and ${MAX_TARGETS} comments` }, { status: 400 })
@@ -178,7 +182,7 @@ export async function POST(request: NextRequest) {
             location: "Conversation",
             text: c.body,
           })
-      } else {
+      } else if (t.kind === "review") {
         const c = reviews.find((x) => x.id === t.id)
         if (c && c.body.trim())
           target.push({
@@ -188,6 +192,22 @@ export async function POST(request: NextRequest) {
             body: c.body,
             location: `Review · ${c.state.toLowerCase().replace("_", " ")}`,
             text: `review state: ${c.state}\n${c.body}`,
+          })
+      } else {
+        const parsed = typeof t.id === "string" ? parseAgentFeedbackId(t.id) : null
+        const review = parsed ? await getReview(parsed.reviewId) : null
+        const finding =
+          parsed && review && review.repo === repo && review.number === number
+            ? review.findings[parsed.index]
+            : null
+        if (finding)
+          target.push({
+            kind: "agent",
+            id: t.id,
+            author: "Agent Review",
+            body: agentFindingBody(finding),
+            location: `${finding.filePath}${finding.lineNumber ? `:${finding.lineNumber}` : ""}`,
+            text: `Agent Review finding (${finding.severity})\nTitle: ${finding.title}\nPath: ${finding.filePath}${finding.lineNumber ? `:${finding.lineNumber}` : ""}\nProblem: ${finding.problem}\nEvidence: ${finding.evidence}\nImpact: ${finding.impact}\nSuggested fix: ${finding.solution}`,
           })
       }
     }

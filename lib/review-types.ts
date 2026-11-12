@@ -30,3 +30,21 @@ export type Review = {
   tokenUsage?: TokenUsage
   createdAt: string
 }
+
+/** Stable feedback id for a finding in an in-house agent review. */
+export function agentFeedbackId(reviewId: string, index: number) {
+  return `${reviewId}:${index}`
+}
+
+export function parseAgentFeedbackId(id: string): { reviewId: string; index: number } | null {
+  const separator = id.lastIndexOf(":")
+  if (separator < 1) return null
+  const index = Number(id.slice(separator + 1))
+  if (!Number.isInteger(index) || index < 0) return null
+  return { reviewId: id.slice(0, separator), index }
+}
+
+/** Body used both for display and to detect whether a finding changed after it was addressed. */
+export function agentFindingBody(finding: Finding) {
+  return `${finding.title}\n\n${finding.problem}`
+}

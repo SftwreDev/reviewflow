@@ -7,13 +7,14 @@ import {
   commitStaged,
   loadSession,
   saveSession,
+  type FeedbackId,
   type FeedbackKind,
   type QueuedReply,
 } from "@/lib/fix-sessions"
 import { sameOrigin } from "@/lib/same-origin"
 export const runtime = "nodejs"
 
-type Reply = { kind: FeedbackKind; id: number; body: string }
+type Reply = { kind: FeedbackKind; id: FeedbackId; body: string }
 
 /**
  * Commits the agent's pending changes. With `push: false` the commit is queued locally (replies are

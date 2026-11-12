@@ -45,7 +45,11 @@ export async function publishQueue(session: FixSession, token: string): Promise<
     const suffix = `\n\n_Addressed in ${commit.sha.slice(0, 7)}._`
     for (const reply of commit.replies) {
       const text = reply.status === "declined" ? reply.body : reply.body + suffix
-      if (reply.kind === "inline") {
+      if (reply.kind === "agent") {
+        // In-house review findings have no GitHub comment to reply to.
+        continue
+      }
+      if (reply.kind === "inline" && typeof reply.id === "number") {
         try {
           await ghRest(token, `/repos/${session.repo}/pulls/${session.number}/comments/${reply.id}/replies`, {
             method: "POST",
