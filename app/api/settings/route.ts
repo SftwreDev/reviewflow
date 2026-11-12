@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto"
 import { hasClaudeCodeAuth } from "@/lib/claude"
+import { sameOrigin } from "@/lib/same-origin"
 export const runtime = "nodejs"
 const dir = path.join(process.env.HOME || ".", ".reviewflow")
 async function secret(name: string, value?: string) {
@@ -22,7 +23,7 @@ export async function GET() {
   })
 }
 export async function POST(req: NextRequest) {
-  if (req.headers.get("origin") && req.headers.get("origin") !== new URL(req.url).origin) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
+  if (!sameOrigin(req)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
   try {
     const body: unknown = await req.json()
     if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid request" }, { status: 400 })

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { deleteSkill, getSkill, listSkills, saveSkill, SKILLS_DIR, PROJECT_ROOT } from "@/lib/skills"
+import { sameOrigin } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
 
@@ -25,9 +26,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin")
-  if (origin && origin !== new URL(request.url).origin)
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
+  if (!sameOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
   try {
     const body = (await request.json().catch(() => null)) as {
       action?: string

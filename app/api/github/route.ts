@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { sameOrigin } from "@/lib/same-origin"
 
 export const runtime = "nodejs"
 const dataDir = path.join(process.env.HOME || ".", ".reviewflow")
@@ -48,10 +49,6 @@ async function graphql(token: string, query: string, variables: Record<string, u
   if (body.errors)
     throw new Error(`GitHub GraphQL error: ${body.errors.map((e: { message: string }) => e.message).join(", ")}`)
   return body.data
-}
-async function originOK(request: NextRequest) {
-  const origin = request.headers.get("origin")
-  return !origin || origin === new URL(request.url).origin
 }
 type Author = { author: { login: string } | null }
 // Cheap on purpose: only flat `last: 30` connections (~1 GraphQL point per page of 100 PRs each).
@@ -197,7 +194,7 @@ export async function GET(request: NextRequest) {
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "GitHub request failed" }, { status: 502 }) }
 }
 export async function POST(request: NextRequest) {
-  if (!(await originOK(request))) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
+  if (!(sameOrigin(request))) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
   try {
     const data = await request.json()
     if (data.action === "remove") { const { unlink } = await import("node:fs/promises"); await unlink(tokenPath).catch(() => {}); return NextResponse.json({ ok: true }) }

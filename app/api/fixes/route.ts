@@ -22,6 +22,7 @@ import {
   type FeedbackKind,
   type FixSession,
 } from "@/lib/fix-sessions"
+import { sameOrigin } from "@/lib/same-origin"
 export const runtime = "nodejs"
 
 const MAX_TARGETS = 50
@@ -90,9 +91,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin")
-  if (origin && origin !== new URL(request.url).origin)
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
+  if (!sameOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
   const body = (await request.json().catch(() => null)) as {
     repo?: unknown
     number?: unknown

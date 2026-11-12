@@ -10,6 +10,7 @@ import {
   type FeedbackKind,
   type QueuedReply,
 } from "@/lib/fix-sessions"
+import { sameOrigin } from "@/lib/same-origin"
 export const runtime = "nodejs"
 
 type Reply = { kind: FeedbackKind; id: number; body: string }
@@ -19,9 +20,7 @@ type Reply = { kind: FeedbackKind; id: number; body: string }
  * held until the push); with `push: true` the whole queue is pushed right away.
  */
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin")
-  if (origin && origin !== new URL(request.url).origin)
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
+  if (!sameOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
   const body = (await request.json().catch(() => null)) as {
     sessionId?: unknown
     commitMessage?: unknown

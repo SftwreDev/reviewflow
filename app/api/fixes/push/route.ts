@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import { readCredential } from "@/lib/credentials"
 import { publishQueue } from "@/lib/fix-publish"
 import { assertNotMerging, git, loadSession, worktreePath } from "@/lib/fix-sessions"
+import { sameOrigin } from "@/lib/same-origin"
 export const runtime = "nodejs"
 
 /** Pushes all queued local commits in one push, then posts the queued replies and removes the workspace. */
 export async function POST(request: NextRequest) {
-  const origin = request.headers.get("origin")
-  if (origin && origin !== new URL(request.url).origin)
-    return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
+  if (!sameOrigin(request)) return NextResponse.json({ error: "Invalid origin" }, { status: 403 })
   const body = (await request.json().catch(() => null)) as { sessionId?: unknown } | null
   if (!body || typeof body.sessionId !== "string")
     return NextResponse.json({ error: "Invalid request" }, { status: 400 })
