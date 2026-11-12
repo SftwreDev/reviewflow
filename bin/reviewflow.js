@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -25,6 +36,37 @@ const env = { ...process.env, REVIEWFLOW_PROJECT_ROOT: projectRoot }
 // Next's workspace-root detection covers both, with no symlinks.
 const inNodeModules = appRoot.split(path.sep).includes("node_modules")
 const buildRoot = inNodeModules ? path.join(path.dirname(nodeModulesDir), ".reviewflow-app") : appRoot
+
+function installedVersion(from, name) {
+  try {
+    return JSON.parse(readFileSync(from.resolve(`${name}/package.json`), "utf8")).version
+  } catch {
+    return null
+  }
+}
+
+// A local install inherits the host's React whenever the majors differ, but the app's JSX and the
+// host's Next.js end up on two separate React copies (invalid hook calls, duplicate type errors).
+// Refuse up front, before a multi-minute build, instead of surfacing a Turbopack module error.
+if (inNodeModules) {
+  const ownReact = installedVersion(require, "react")
+  const hostReact = installedVersion(createRequire(path.join(projectRoot, "package.json")), "react")
+  const ownMajor = ownReact?.split(".")[0]
+  const hostMajor = hostReact?.split(".")[0]
+  if (ownMajor && hostMajor && ownMajor !== hostMajor) {
+    console.error(
+      `ReviewFlow runs on React ${ownMajor}, but ${projectRoot} resolves React ${hostReact}.\n` +
+        `Next.js cannot build this app against two React majors, so a project-local install only works\n` +
+        `when the host is already on React ${ownMajor}. Pick one:\n\n` +
+        `  install ReviewFlow globally, keeping its own React tree:\n` +
+        `    npm install -g --no-audit --no-fund https://github.com/SftwreDev/reviewflow.git\n` +
+        `    reviewflow --port ${port}\n\n` +
+        `  or upgrade this project to React ${ownMajor}:\n` +
+        `    npm install react@${ownMajor} react-dom@${ownMajor} @types/react@${ownMajor} @types/react-dom@${ownMajor}\n`,
+    )
+    process.exit(1)
+  }
+}
 
 // Content fingerprint of everything that affects the build. npm normalises file
 // mtimes in packed tarballs, so hash contents rather than stat info.
@@ -54,6 +96,14 @@ function collect(entry, hash) {
   for (const name of names) collect(path.join(entry, name), hash)
 }
 
+function isLink(target) {
+  try {
+    return lstatSync(target).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 function sourceFingerprint() {
   const hash = createHash("sha1")
   for (const entry of SOURCE_ENTRIES) collect(entry, hash)
@@ -64,6 +114,19 @@ function stageSources() {
   mkdirSync(buildRoot, { recursive: true })
   // Keep the staged build (and anything it generates) out of the host project's git status.
   writeFileSync(path.join(buildRoot, ".gitignore"), "*\n")
+  // npm nests the dependencies whose versions clash with the host under this package's own
+  // node_modules. The staged copy sits beside the host's node_modules instead of under this package,
+  // so those nested copies would be invisible to it: symlink ours in front of the host's tree, and
+  // plain lookup still falls through to whatever npm hoisted.
+  const ownModules = path.join(appRoot, "node_modules")
+  const bridge = path.join(buildRoot, "node_modules")
+  if (inNodeModules && existsSync(ownModules)) {
+    if (existsSync(bridge) || isLink(bridge)) {
+      if (isLink(bridge)) unlinkSync(bridge)
+      else rmSync(bridge, { recursive: true, force: true })
+    }
+    symlinkSync(ownModules, bridge, "dir")
+  }
   for (const entry of STAGED_ENTRIES) {
     rmSync(path.join(buildRoot, entry), { recursive: true, force: true })
     if (existsSync(path.join(appRoot, entry))) cpSync(path.join(appRoot, entry), path.join(buildRoot, entry), { recursive: true })

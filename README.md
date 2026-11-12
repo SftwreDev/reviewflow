@@ -19,6 +19,12 @@ A project-local install does not add `reviewflow` to your PATH, so call it with 
 `reviewflow` after a project-local install fails with `command not found` — only `npm install -g`
 creates the global shim.
 
+A project-local install borrows the host project's dependency tree, so the host must already run the
+same React major as ReviewFlow (React 19). npm nests ReviewFlow's React under
+`node_modules/reviewflow/node_modules` when the host is on React 18, and one build cannot span two
+React majors — the CLI stops early and says so instead of failing mid-build. Global installs are
+unaffected: they keep ReviewFlow's own tree.
+
 The install is large and slow on purpose: `@anthropic-ai/claude-agent-sdk` ships a bundled Claude
 Code CLI (~340 MB) and Next.js adds ~200 MB, so a fresh tree is ~1.1 GB / ~540 packages. Skipping the
 audit round-trip helps:
