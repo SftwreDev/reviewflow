@@ -291,8 +291,10 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState<string>("")
-  const [posting, setPosting] = useState(false)
-  const [postedUrl, setPostedUrl] = useState<string | null>(null)
+  const [postingIds, setPostingIds] = useState<string[]>([])
+  const [bulkPosting, setBulkPosting] = useState(false)
+  const [postedUrls, setPostedUrls] = useState<Record<string, string>>({})
+  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([])
   const [logs, setLogs] = useState<string[]>([])
   const [history, setHistory] = useState<Review[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -451,27 +453,73 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     }
   }
 
-  const postToPr = async (event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES") => {
-    if (!result?.id) return
-    setPosting(true)
-    setError("")
+  const postReview = async (reviewId: string, event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES" = "COMMENT") => {
+    setPostingIds((prev) => (prev.includes(reviewId) ? prev : [...prev, reviewId]))
     try {
       const response = await fetch("/api/reviews/post", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reviewId: result.id, repo, number, event }),
+        body: JSON.stringify({ reviewId, repo, number, event }),
       })
       const data = (await response.json().catch(() => ({}))) as { review?: { html_url?: string }; error?: string }
       if (!response.ok) throw new Error(data.error || `Failed to post review (${response.status})`)
-      setPostedUrl(data.review?.html_url ?? "posted")
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to post review to PR")
+      const url = data.review?.html_url ?? "posted"
+      setPostedUrls((prev) => ({ ...prev, [reviewId]: url }))
+      return url
     } finally {
-      setPosting(false)
+      setPostingIds((prev) => prev.filter((id) => id !== reviewId))
     }
   }
 
+  const postToPr = async (event: "COMMENT" | "APPROVE" | "REQUEST_CHANGES") => {
+    if (!result?.id) return
+    setError("")
+    try {
+      await postReview(result.id, event)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to post review to PR")
+    }
+  }
+
+  const postSingleReview = async (reviewId: string) => {
+    setError("")
+    try {
+      await postReview(reviewId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to post review to PR")
+    }
+  }
+
+  const postSelectedReviews = async () => {
+    const ids = selectedReviewIds.filter((id) => !postedUrls[id])
+    if (ids.length === 0) return
+    setBulkPosting(true)
+    setError("")
+    const failed: string[] = []
+    for (const id of ids) {
+      try {
+        await postReview(id)
+      } catch {
+        failed.push(id)
+      }
+    }
+    setSelectedReviewIds(failed)
+    if (failed.length > 0) {
+      setError(`Failed to post ${failed.length} of ${ids.length} selected review${ids.length === 1 ? "" : "s"}.`)
+    }
+    setBulkPosting(false)
+  }
+
+  const toggleReviewSelection = (reviewId: string) => {
+    setSelectedReviewIds((prev) =>
+      prev.includes(reviewId) ? prev.filter((id) => id !== reviewId) : [...prev, reviewId]
+    )
+  }
+
   const findings = result?.findings || []
+  const resultPostedUrl = result?.id ? postedUrls[result.id] : undefined
+  const resultPosting = result?.id ? postingIds.includes(result.id) : false
+  const selectedUnpostedCount = selectedReviewIds.filter((id) => !postedUrls[id]).length
   const criticalCount = findings.filter((f) => f.severity === "critical").length
   const highCount = findings.filter((f) => f.severity === "high").length
   const mediumCount = findings.filter((f) => f.severity === "medium").length
@@ -647,36 +695,116 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             <h3 className="text-sm font-semibold">Review History</h3>
             {historyLoading && <LoaderCircle className="size-3 animate-spin text-muted-foreground" />}
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px]"
-            onClick={() => void loadHistory()}
-            disabled={historyLoading}
-          >
-            Refresh
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1.5 text-[11px]"
+              onClick={() => void postSelectedReviews()}
+              disabled={selectedUnpostedCount === 0 || bulkPosting}
+            >
+              {bulkPosting ? (
+                <LoaderCircle className="size-3 animate-spin" />
+              ) : (
+                <Send className="size-3" />
+              )}
+              {bulkPosting
+                ? "Posting..."
+                : `Post selected${selectedUnpostedCount ? ` (${selectedUnpostedCount})` : ""}`}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px]"
+              onClick={() => void loadHistory()}
+              disabled={historyLoading}
+            >
+              Refresh
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="max-h-56 space-y-2 overflow-y-auto p-4">
           {history.length === 0 ? (
             <p className="text-xs text-muted-foreground">No previous reviews.</p>
           ) : (
-            history.map((review) => (
-              <button
-                key={review.id}
-                type="button"
-                onClick={() => {
-                  setResult({ headSha: review.headSha, findings: review.findings })
-                  setLogs([])
-                }}
-                className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 px-3 py-2 text-left text-xs hover:bg-muted/40"
-              >
-                <span className="font-medium">{new Date(review.createdAt).toLocaleString()}</span>
-                <span className="text-muted-foreground">
-                  {review.model} · {review.findings.length} findings
+            <>
+              <div className="flex items-center justify-between gap-2 pb-1">
+                <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+                  <Checkbox
+                    checked={history.every((review) => selectedReviewIds.includes(review.id))}
+                    onCheckedChange={(checked) =>
+                      setSelectedReviewIds(checked ? history.map((review) => review.id) : [])
+                    }
+                  />
+                  Select all
+                </label>
+                <span className="text-[11px] text-muted-foreground">
+                  {selectedReviewIds.length} selected
                 </span>
-              </button>
-            ))
+              </div>
+              {history.map((review) => {
+                const posted = postedUrls[review.id]
+                const isPosting = postingIds.includes(review.id)
+                return (
+                  <div
+                    key={review.id}
+                    className="flex items-center gap-2 rounded-md border border-border/60 px-2 py-1.5 text-xs hover:bg-muted/40"
+                  >
+                    <Checkbox
+                      checked={selectedReviewIds.includes(review.id)}
+                      onCheckedChange={() => toggleReviewSelection(review.id)}
+                      aria-label="Select review"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResult({
+                          id: review.id,
+                          headSha: review.headSha,
+                          findings: review.findings,
+                          appliedSkills: review.skills,
+                        })
+                        setLogs([])
+                      }}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
+                    >
+                      <span className="truncate font-medium">
+                        {new Date(review.createdAt).toLocaleString()}
+                      </span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {review.model} · {review.findings.length} findings
+                      </span>
+                    </button>
+                    {posted ? (
+                      <a
+                        href={posted.startsWith("http") ? posted : undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 text-[11px] font-medium text-emerald-700 dark:text-emerald-300"
+                      >
+                        <Check className="size-3" />
+                        Posted
+                      </a>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 gap-1.5 text-[11px]"
+                        disabled={isPosting || bulkPosting}
+                        onClick={() => void postSingleReview(review.id)}
+                      >
+                        {isPosting ? (
+                          <LoaderCircle className="size-3 animate-spin" />
+                        ) : (
+                          <Send className="size-3" />
+                        )}
+                        {isPosting ? "Posting..." : "Post"}
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </>
           )}
         </CardContent>
       </Card>
@@ -741,9 +869,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                 {copiedReview ? "Copied" : "Copy Results"}
               </Button>
               {result.id ? (
-                postedUrl ? (
+                resultPostedUrl ? (
                   <a
-                    href={postedUrl.startsWith("http") ? postedUrl : undefined}
+                    href={resultPostedUrl.startsWith("http") ? resultPostedUrl : undefined}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-300"
@@ -755,12 +883,12 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={posting}
+                    disabled={resultPosting}
                     onClick={() => void postToPr("COMMENT")}
                     className="h-7 gap-1.5 text-xs"
                   >
-                    {posting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                    {posting ? "Posting..." : "Post to PR"}
+                    {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                    {resultPosting ? "Posting..." : "Post to PR"}
                   </Button>
                 )
               ) : null}
