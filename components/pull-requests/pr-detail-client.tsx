@@ -9,11 +9,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
+  Wrench,
 } from "lucide-react"
 import { PRHeader, type PullRequestData, type CheckRun } from "./pr-header"
 import { PROverview, type ReviewData, type IssueCommentData } from "./pr-overview"
 import { PRFilesView, type ChangedFile } from "./pr-files-view"
 import { RunReview } from "@/components/reviews/run-review"
+import { AddressFeedback } from "@/components/reviews/address-feedback"
+import { useApp } from "@/lib/app-context"
 import type { InlineComment } from "./diff-viewer"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -39,7 +42,9 @@ export function PRDetailClient({
   checks = [],
   onBack,
 }: PRDetailClientProps) {
-  const [activeTab, setActiveTab] = useState<"overview" | "files" | "ai" | "checks">("overview")
+  const { user, openPr } = useApp()
+  const [activeTab, setActiveTab] = useState<"overview" | "files" | "ai" | "fix" | "checks">("overview")
+  const canFix = Boolean(user) && pr.user.login === user && pr.state === "open" && !pr.merged_at
 
   const successfulChecks = checks.filter((c) => c.conclusion === "success").length
   const failedChecks = checks.filter(
@@ -124,6 +129,21 @@ export function PRDetailClient({
             <span>AI Code Review</span>
           </button>
 
+          {canFix && (
+            <button
+              type="button"
+              onClick={() => setActiveTab("fix")}
+              className={cn(
+                "inline-flex items-center gap-2 border-b-2 px-3 py-2 font-medium text-xs transition-all",
+                activeTab === "fix"
+                  ? "border-primary text-foreground font-semibold"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Wrench className="size-4 text-primary" />
+              <span>Address Feedback</span>
+            </button>
+          )}
           {checks.length > 0 && (
             <button
               type="button"
@@ -178,6 +198,16 @@ export function PRDetailClient({
           />
         )}
 
+        {activeTab === "fix" && canFix && (
+          <AddressFeedback
+            repo={repo}
+            pr={pr}
+            reviews={reviews}
+            comments={comments}
+            reviewComments={reviewComments}
+            onReload={() => openPr(pr.number)}
+          />
+        )}
         {activeTab === "checks" && (
           <div className="rounded-xl border border-border/70 bg-card overflow-hidden shadow-xs">
             <div className="bg-muted/40 p-4 border-b border-border/50 flex items-center justify-between">

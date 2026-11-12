@@ -17,6 +17,7 @@ export interface InlineComment {
   line: number | null
   path?: string
   html_url?: string
+  in_reply_to_id?: number | null
 }
 
 interface DiffLine {

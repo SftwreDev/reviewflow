@@ -41,7 +41,7 @@ interface SkillsMultiSelectProps {
   isLoading?: boolean
 }
 
-function SkillsMultiSelect({ skills, selected, onChange, isLoading }: SkillsMultiSelectProps) {
+export function SkillsMultiSelect({ skills, selected, onChange, isLoading }: SkillsMultiSelectProps) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState("")
 
