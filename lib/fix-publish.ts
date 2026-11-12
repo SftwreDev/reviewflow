@@ -1,8 +1,9 @@
 import { ghRest } from "@/lib/github-rest"
+import { resolveReviewThreadsForComments } from "@/lib/github-threads"
 import { recordAddressedFeedback, type AddressedFeedback } from "@/lib/addressed-feedback"
 import { cleanupSession, pushHead, type FixSession } from "@/lib/fix-sessions"
 
-export type PublishResult = { sha: string; posted: number; failed: string[] }
+export type PublishResult = { sha: string; posted: number; resolved: number; failed: string[] }
 
 /**
  * Pushes the workspace once, removes it, then posts the queued replies. A rejected push throws and
@@ -74,5 +75,17 @@ export async function publishQueue(session: FixSession, token: string): Promise<
       failed.push(`general comment: ${error instanceof Error ? error.message : "failed"}`)
     }
   }
-  return { sha, posted, failed }
+
+  // Mark GitHub review conversations resolved for every inline comment whose fix is now pushed.
+  const inlineIds = [
+    ...new Set(
+      queue.flatMap((commit) =>
+        (commit.addressed ?? [])
+          .filter((item) => item.kind === "inline" && item.status !== "declined" && typeof item.id === "number")
+          .map((item) => item.id as number)
+      )
+    ),
+  ]
+  const resolution = await resolveReviewThreadsForComments(token, session.repo, session.number, inlineIds)
+  return { sha, posted, resolved: resolution.resolved, failed: [...failed, ...resolution.failed] }
 }

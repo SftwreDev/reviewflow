@@ -95,13 +95,14 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [pushNow, setPushNow] = useState(false)
   const [notice, setNotice] = useState("")
-  const [done, setDone] = useState<{ sha: string; posted: number; failed: string[] } | null>(null)
+  const [done, setDone] = useState<{ sha: string; posted: number; resolved: number; failed: string[] } | null>(null)
   const [skills, setSkills] = useState<{ name: string; description: string }[]>([])
   const [loadingSkills, setLoadingSkills] = useState(true)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
   const [customPrompt, setCustomPrompt] = useState("")
   const [overrideModel, setOverrideModel] = useState("")
   const [addressed, setAddressed] = useState<AddressedRecord[]>([])
+  const [resolvedCommentIds, setResolvedCommentIds] = useState<Set<number>>(new Set())
   const [agentReview, setAgentReview] = useState<Review | null>(null)
   const sessionRef = useRef<string | null>(null)
 
@@ -155,6 +156,8 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
 
     for (const c of reviewComments) {
       if (c.user.login === user) continue
+      // Threads already resolved on GitHub (by this app or by hand) are done.
+      if (resolvedCommentIds.has(c.id) || resolvedCommentIds.has(rootOf(c).id)) continue
       const location = c.path ? `${c.path}${c.line ? `:${c.line}` : ""}` : undefined
       if (!c.in_reply_to_id) {
         if (addressedItem("inline", c.id, c.body)) continue
@@ -196,7 +199,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       })
     }
     return list
-  }, [reviewComments, reviews, comments, user, addressedByKey, agentReview])
+  }, [reviewComments, reviews, comments, user, addressedByKey, agentReview, resolvedCommentIds])
 
   const [selected, setSelected] = useState<Set<string> | null>(null)
   const selectedKeys = useMemo(() => selected ?? new Set(items.map((i) => i.key)), [selected, items])
@@ -210,6 +213,24 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       })
       .catch(() => {
         if (active) setAddressed([])
+      })
+    return () => {
+      active = false
+    }
+  }, [repo, pr.number])
+
+  useEffect(() => {
+    let active = true
+    fetch(`/api/github/review-threads?repo=${encodeURIComponent(repo)}&number=${pr.number}`)
+      .then((response) => (response.ok ? response.json() : { resolvedCommentIds: [] }))
+      .then((data: { resolvedCommentIds?: number[] }) => {
+        if (!active) return
+        setResolvedCommentIds(
+          new Set(Array.isArray(data.resolvedCommentIds) ? data.resolvedCommentIds.filter(Number.isInteger) : [])
+        )
+      })
+      .catch(() => {
+        if (active) setResolvedCommentIds(new Set())
       })
     return () => {
       active = false
@@ -351,7 +372,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     setError("")
     setNotice("")
     try {
-      const data = await postJson<{ pushed?: boolean; queued?: number; sha?: string; posted?: number; failed?: string[] }>(
+      const data = await postJson<{ pushed?: boolean; queued?: number; sha?: string; posted?: number; resolved?: number; failed?: string[] }>(
         "/api/fixes/approve",
         {
           sessionId: outcome.id,
@@ -364,7 +385,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       )
       sessionRef.current = null
       if (data.pushed && data.sha) {
-        setDone({ sha: data.sha, posted: data.posted ?? 0, failed: data.failed ?? [] })
+        setDone({ sha: data.sha, posted: data.posted ?? 0, resolved: data.resolved ?? 0, failed: data.failed ?? [] })
         setPhase("done")
       } else {
         setNotice(`Committed locally (${data.queued ?? 1} unpushed). Replies are posted when you push.`)
@@ -429,8 +450,8 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     setError("")
     setNotice("")
     try {
-      const data = await postJson<{ sha: string; posted: number; failed: string[] }>("/api/fixes/push", { sessionId: workspace.id })
-      setDone({ sha: data.sha, posted: data.posted, failed: data.failed })
+      const data = await postJson<{ sha: string; posted: number; resolved: number; failed: string[] }>("/api/fixes/push", { sessionId: workspace.id })
+      setDone({ sha: data.sha, posted: data.posted, resolved: data.resolved ?? 0, failed: data.failed })
       setPhase("done")
       await refreshAddressed()
       await refreshWorkspace()
@@ -829,8 +850,13 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
               Pushed <code className="font-mono">{done.sha.slice(0, 7)}</code> to {pr.head.ref}. Local workspace cleaned up.
             </p>
             {done.posted > 0 && <p className="text-muted-foreground">{done.posted} repl{done.posted === 1 ? "y" : "ies"} posted.</p>}
+            {done.resolved > 0 && (
+              <p className="text-muted-foreground">
+                {done.resolved} conversation{done.resolved === 1 ? "" : "s"} marked resolved on GitHub.
+              </p>
+            )}
             {done.failed.length > 0 && (
-              <p className="text-destructive">Some replies failed: {done.failed.join("; ")}</p>
+              <p className="text-destructive">Some follow-up actions failed: {done.failed.join("; ")}</p>
             )}
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onReload}>
               Reload pull request
