@@ -70,6 +70,8 @@ const KIND_STYLES: Record<
 }
 
 const SOUND_STORAGE_KEY = "reviewflow:notification-sound"
+const NOTIFICATION_SOUND_URL = "/notif.mp3"
+const NOTIFICATION_GAIN = 1.8
 const soundListeners = new Set<() => void>()
 
 function subscribeSound(callback: () => void) {
@@ -120,33 +122,44 @@ export function NotificationsPanel() {
     getSoundServerSnapshot
   )
   const audioContextRef = useRef<AudioContext | null>(null)
+  const notificationBufferRef = useRef<AudioBuffer | null>(null)
+  const notificationSourceRef = useRef<AudioBufferSourceNode | null>(null)
   const knownNotifications = useRef<{ repo: string; ids: Set<string> } | null>(null)
 
-  const playBeep = useCallback(() => {
+  const playNotificationSound = useCallback(async () => {
     try {
       const AudioContextClass = window.AudioContext
       if (!AudioContextClass) return
       const context = audioContextRef.current ?? new AudioContextClass()
       audioContextRef.current = context
-      if (context.state === "suspended") void context.resume()
+      if (context.state === "suspended") await context.resume()
 
-      const now = context.currentTime
-      const oscillator = context.createOscillator()
-      const gain = context.createGain()
-      oscillator.type = "sine"
-      oscillator.frequency.setValueAtTime(880, now)
-      oscillator.frequency.setValueAtTime(660, now + 0.12)
-      gain.gain.setValueAtTime(0.0001, now)
-      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01)
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32)
-      oscillator.connect(gain)
-      gain.connect(context.destination)
-      oscillator.onended = () => {
-        oscillator.disconnect()
-        gain.disconnect()
+      let buffer = notificationBufferRef.current
+      if (!buffer) {
+        const response = await fetch(NOTIFICATION_SOUND_URL, { cache: "force-cache" })
+        if (!response.ok) return
+        buffer = await context.decodeAudioData(await response.arrayBuffer())
+        notificationBufferRef.current = buffer
       }
-      oscillator.start(now)
-      oscillator.stop(now + 0.34)
+
+      try {
+        notificationSourceRef.current?.stop()
+      } catch {
+        // Previous sound already ended.
+      }
+      const source = context.createBufferSource()
+      const gain = context.createGain()
+      source.buffer = buffer
+      gain.gain.value = NOTIFICATION_GAIN
+      source.connect(gain)
+      gain.connect(context.destination)
+      source.onended = () => {
+        source.disconnect()
+        gain.disconnect()
+        if (notificationSourceRef.current === source) notificationSourceRef.current = null
+      }
+      notificationSourceRef.current = source
+      source.start(0)
     } catch {
       // Audio is optional.
     }
@@ -174,7 +187,7 @@ export function NotificationsPanel() {
         const fresh = list.some(
           (notification) => !notification.readAt && !known.ids.has(notification.id)
         )
-        if (fresh && getSoundSnapshot()) playBeep()
+        if (fresh && getSoundSnapshot()) void playNotificationSound()
       }
       knownNotifications.current = {
         repo,
@@ -187,7 +200,7 @@ export function NotificationsPanel() {
     } finally {
       setLoading(false)
     }
-  }, [repo, playBeep])
+  }, [repo, playNotificationSound])
 
   useEffect(() => {
     if (!repo) return
@@ -225,6 +238,16 @@ export function NotificationsPanel() {
         source.buffer = buffer
         source.connect(context.destination)
         source.start(0)
+
+        if (!notificationBufferRef.current) {
+          void fetch(NOTIFICATION_SOUND_URL, { cache: "force-cache" })
+            .then((response) => (response.ok ? response.arrayBuffer() : null))
+            .then((data) => (data ? context.decodeAudioData(data) : null))
+            .then((decoded) => {
+              if (decoded) notificationBufferRef.current = decoded
+            })
+            .catch(() => {})
+        }
       } catch {
         // Audio is optional.
       }
@@ -245,7 +268,7 @@ export function NotificationsPanel() {
       // Preference persistence is optional.
     }
     for (const listener of soundListeners) listener()
-    if (next) playBeep()
+    if (next) void playNotificationSound()
   }
 
   const visible = notifications.filter(
