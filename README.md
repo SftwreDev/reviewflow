@@ -15,7 +15,19 @@ reviewflow --port 3000
 ```
 
 A project-local install does not add `reviewflow` to your PATH, so call it with `npx reviewflow`
-(or add `"reviewflow": "reviewflow --port 3000"` to your `package.json` scripts).
+(or add `"reviewflow": "reviewflow --port 3000"` to your `package.json` scripts). Running bare
+`reviewflow` after a project-local install fails with `command not found` — only `npm install -g`
+creates the global shim.
+
+The install is large and slow on purpose: `@anthropic-ai/claude-agent-sdk` ships a bundled Claude
+Code CLI (~340 MB) and Next.js adds ~200 MB, so a fresh tree is ~1.1 GB / ~540 packages. Skipping the
+audit round-trip helps:
+
+```bash
+npm install -g --no-audit --no-fund https://github.com/SftwreDev/reviewflow.git
+```
+
+Install once globally; every later run starts the app without re-resolving dependencies.
 
 The app builds on first run and rebuilds when its source changes. Because Next.js will not compile
 TypeScript inside `node_modules`, a local install builds from a copy in `.reviewflow-app/` next to your
