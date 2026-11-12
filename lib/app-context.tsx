@@ -393,7 +393,8 @@ export function AppProvider({
   useEffect(() => {
     if (!repo) return
     const interval = setInterval(() => {
-      void loadPullsForRepo(repo)
+      // A background tab would burn GraphQL quota for updates nobody sees.
+      if (!document.hidden) void loadPullsForRepo(repo)
     }, 60_000)
     return () => clearInterval(interval)
   }, [repo, loadPullsForRepo])

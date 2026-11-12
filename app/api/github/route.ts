@@ -54,19 +54,20 @@ async function originOK(request: NextRequest) {
   return !origin || origin === new URL(request.url).origin
 }
 type Author = { author: { login: string } | null }
+// Cheap on purpose: only flat `last: 30` connections (~1 GraphQL point per page of 100 PRs each).
+// Nested reviewThreads { comments } cost ~100 points per page and exhausted the hourly quota.
+// Inline review comments always belong to a review, so a COMMENTED review by the user covers them.
 function commentedByMe(
   node: {
     issueComments?: { nodes: Author[] }
-    reviews?: { nodes: (Author & { body: string })[] }
-    reviewThreads?: { nodes: { comments: { nodes: Author[] } }[] }
+    reviews?: { nodes: (Author & { body: string; state: string })[] }
   },
   login: string
 ) {
   const mine = (n: Author) => n.author?.login === login
   return Boolean(
     node.issueComments?.nodes.some(mine) ||
-    node.reviews?.nodes.some((r) => mine(r) && r.body.trim()) ||
-    node.reviewThreads?.nodes.some((t) => t.comments.nodes.some(mine))
+    node.reviews?.nodes.some((r) => mine(r) && (r.body.trim() || r.state === "COMMENTED"))
   )
 }
 export async function GET(request: NextRequest) {
@@ -158,8 +159,8 @@ export async function GET(request: NextRequest) {
                 reviewDecision
                 comments(first: 0) { totalCount }
                 issueComments: comments(last: 30) { nodes { author { login } } }
-                reviews(last: 30) { nodes { author { login } body } }
-                reviewThreads(first: 100) { nodes { isResolved comments(first: 10) { nodes { author { login } } } } }
+                reviews(last: 30) { nodes { author { login } body state } }
+                reviewThreads(first: 100) { nodes { isResolved } }
               }
               pageInfo { hasNextPage endCursor }
             }
