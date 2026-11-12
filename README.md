@@ -5,18 +5,21 @@ Agent-powered code review app. Install directly from a git repository.
 ## Install from git
 
 ```bash
-npm install <your-git-repo-url>
-# or globally
-npm install -g <your-git-repo-url>
-```
+# into a project
+npm install https://github.com/SftwreDev/reviewflow.git
+npx reviewflow --port 3000
 
-The app builds on first run. Run:
-
-```bash
+# or globally (puts `reviewflow` on your PATH)
+npm install -g https://github.com/SftwreDev/reviewflow.git
 reviewflow --port 3000
 ```
 
-First run compiles the app, then starts it on the given port. The app reads `.claude/skills` from the project root where you run the command.
+A project-local install does not add `reviewflow` to your PATH, so call it with `npx reviewflow`
+(or add `"reviewflow": "reviewflow --port 3000"` to your `package.json` scripts).
+
+The app builds on first run and rebuilds when its source changes. Because Next.js will not compile
+TypeScript inside `node_modules`, a local install builds from a copy in `.reviewflow-app/` next to your
+`node_modules` (git-ignored). The app reads `.claude/skills` from the directory where you run the command.
 
 ## Agent Review options
 
