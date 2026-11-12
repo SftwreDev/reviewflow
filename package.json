@@ -7,24 +7,10 @@
     "reviewflow": "./bin/reviewflow.js"
   },
   "files": [
-    "app",
+    "dist",
     "bin",
-    "components",
-    "hooks",
-    "lib",
-    "public",
     "scripts",
-    "next.config.ts",
-    "postcss.config.mjs",
-    "tsconfig.json",
-    "components.json",
-    "eslint.config.mjs",
-    "next-env.d.ts",
-    "README.md",
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".prettierrc",
-    ".prettierignore"
+    "README.md"
   ],
   "scripts": {
     "dev": "next dev",
@@ -33,10 +19,14 @@
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/install-shim.mjs"
+    "postinstall": "node scripts/install-shim.mjs",
+    "prepare": "node scripts/build-app.mjs",
+    "prepack": "node -e \"require('node:fs').accessSync('dist/server.js')\""
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.322",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.322"
+  },
+  "devDependencies": {
     "@base-ui/react": "^1.9.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
@@ -50,9 +40,13 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.4",
     "lucide-react": "^1.71.0",
     "next": "16.4.4",
     "next-themes": "^0.4.6",
+    "prettier": "^3.9.10",
+    "prettier-plugin-tailwindcss": "^0.8.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "react-markdown": "^10.1.0",
@@ -65,11 +59,5 @@
     "tw-animate-css": "^1.4.0",
     "typescript": "^5",
     "zod": "^4.6.7"
-  },
-  "devDependencies": {
-    "eslint": "^9",
-    "eslint-config-next": "16.4.4",
-    "prettier": "^3.9.10",
-    "prettier-plugin-tailwindcss": "^0.8.1"
   }
 }

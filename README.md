@@ -14,11 +14,8 @@ reviewflow --port 3001
 The install adds a `reviewflow` launcher to the first writable directory on your `PATH` under your
 home (preferring `~/.local/bin`). The launcher walks up from the current directory and runs the copy
 installed in that project, so a plain local install is enough and two projects on different versions
-never collide. Nothing is installed globally. Uninstall the dependency and the launcher just reports
-that the project has no ReviewFlow.
-
-Set `REVIEWFLOW_NO_SHIM=1` to skip the launcher, then call `npx reviewflow` or
-`node_modules/.bin/reviewflow`.
+never collide. Nothing is installed globally. Set `REVIEWFLOW_NO_SHIM=1` to skip the launcher and use
+`npx reviewflow` instead.
 
 Global install (adds to your npm global bin instead):
 
@@ -27,19 +24,14 @@ npm install -g https://github.com/SftwreDev/reviewflow.git
 reviewflow --port 3001
 ```
 
-A local install builds against the host project's dependency tree, so the host must be on the same
-React major ReviewFlow ships (React 19 — also the Next.js 16 baseline). On React 17/18 npm nests
-ReviewFlow's React under `node_modules/reviewflow/node_modules`, two React copies end up in one
-build, and the CLI stops before building with the upgrade command printed. Global installs are
-unaffected: they keep their own tree.
+What ships is a prebuilt Next.js standalone server (`dist/`, built by `prepare` while npm clones the
+repository). The only npm dependency is `@anthropic-ai/claude-agent-sdk`, so an install is ~435 MB and
+takes about a minute; starting the server afterwards is instant and needs no build. The app does not
+touch the host project's React or Next.js, so any project version works.
 
-The app builds on first run and rebuilds when its source changes. Because Next.js will not compile
-TypeScript inside `node_modules`, a local install builds from a copy in `.reviewflow-app/` next to your
-`node_modules` (git-ignored). The app reads `.claude/skills` from the directory where you run the command.
-
-The install is large on purpose: `@anthropic-ai/claude-agent-sdk` ships a bundled Claude Code CLI
-(~340 MB) and Next.js adds ~200 MB, so a fresh tree is ~1.1 GB / ~540 packages. Add
-`--no-audit --no-fund` to skip the audit round-trip.
+`prepare` builds the bundle with the repository's own dev dependencies. To skip it, set
+`REVIEWFLOW_SKIP_BUILD=1`. In the repository itself, `node bin/reviewflow.js` rebuilds `dist/` from
+source when a source file changed, then serves it.
 
 ## Agent Review options
 
