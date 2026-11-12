@@ -13,7 +13,6 @@ import type { ChangedFile } from "@/components/pull-requests/pr-files-view"
 import type { ReviewData, IssueCommentData } from "@/components/pull-requests/pr-overview"
 import type { InlineComment } from "@/components/pull-requests/diff-viewer"
 import type { TokenUsage } from "@/lib/review-types"
-import { toast } from "sonner"
 
 export type Repo = { full_name: string; private: boolean; description: string | null }
 
@@ -86,6 +85,16 @@ interface AppContextType {
   refreshClaudeCapabilities: () => Promise<void>
   disconnectGithub: () => Promise<void>
   removeClaudeKey: () => Promise<void>
+  llmProvider: string
+  saveLlmProvider: (provider: string) => Promise<void>
+  openaiKeyConfigured: boolean
+  openrouterKeyConfigured: boolean
+  saveOpenAIKey: (key: string, action: string) => Promise<void>
+  saveOpenRouterKey: (key: string, action: string) => Promise<void>
+  removeOpenAIKey: () => Promise<void>
+  removeOpenRouterKey: () => Promise<void>
+  llmModel: string
+  saveLlmModel: (model: string) => Promise<void>
   clearStatus: () => void
 }
 
@@ -124,6 +133,10 @@ export function AppProvider({
     { value: string; displayName: string; description: string }[]
   >([])
   const [claudeSkills, setClaudeSkills] = useState<{ name: string; description: string }[]>([])
+  const [llmProvider, setLlmProvider] = useState("claude")
+  const [openaiKeyConfigured, setOpenaiKeyConfigured] = useState(false)
+  const [openrouterKeyConfigured, setOpenrouterKeyConfigured] = useState(false)
+  const [llmModel, setLlmModel] = useState("")
   const [activeTab, setActiveTabState] = useState<TabType>(initialTab || "dashboard")
   const [activePrId, setActivePrId] = useState<number | null>(initialPrId ?? null)
   const [activePrData, setActivePrData] = useState<PRDetailData | null>(null)
@@ -134,9 +147,6 @@ export function AppProvider({
 
   // Cache PR details in memory: key is `${repo}#${number}`
   const prCache = useRef<Map<string, PRDetailData>>(new Map())
-  // Track previous pull counts to detect new comments/change requests
-  const prevPullsRef = useRef<Pull[]>([])
-
   const clearStatus = useCallback(() => {
     setStatus("")
   }, [])
@@ -168,21 +178,6 @@ export function AppProvider({
           req(`/api/reviews?repo=${encodeURIComponent(repoName)}`),
         ])
         const newPulls = (d.pulls || []) as Pull[]
-        const previous = prevPullsRef.current
-        if (previous.length > 0) {
-          for (const p of newPulls) {
-            const old = previous.find((x) => x.number === p.number)
-            if (!old) continue
-            const oldComments = (old.comments ?? 0) + (old.review_comments ?? 0)
-            const newComments = (p.comments ?? 0) + (p.review_comments ?? 0)
-            if (newComments > oldComments) {
-              toast.info(`PR #${p.number} has ${newComments - oldComments} new comment(s)`, {
-                description: p.title,
-              })
-            }
-          }
-        }
-        prevPullsRef.current = newPulls
         setPulls(newPulls)
         setRepoLabels(l.labels || [])
         setReviewHistory(r.reviews || [])
@@ -389,6 +384,90 @@ export function AppProvider({
     }
   }, [req])
 
+  const saveLlmProvider = useCallback(
+    async (provider: string) => {
+      try {
+        await req("/api/settings", { action: "llm-provider", provider })
+        setLlmProvider(provider)
+        setStatus(`Provider set to ${provider}`)
+        setStatusType("success")
+      } catch (e) {
+        setStatus((e as Error).message)
+        setStatusType("error")
+      }
+    },
+    [req]
+  )
+
+  const saveOpenAIKey = useCallback(
+    async (key: string, action: string) => {
+      try {
+        await req("/api/settings", { action: action === "test" ? "llm-test" : "openai-save", key, provider: "openai" })
+        if (action !== "test") setOpenaiKeyConfigured(true)
+        setStatus(action === "test" ? "OpenAI connection verified" : "OpenAI key saved")
+        setStatusType("success")
+      } catch (e) {
+        setStatus((e as Error).message)
+        setStatusType("error")
+      }
+    },
+    [req]
+  )
+
+  const saveOpenRouterKey = useCallback(
+    async (key: string, action: string) => {
+      try {
+        await req("/api/settings", { action: action === "test" ? "llm-test" : "openrouter-save", key, provider: "openrouter" })
+        if (action !== "test") setOpenrouterKeyConfigured(true)
+        setStatus(action === "test" ? "OpenRouter connection verified" : "OpenRouter key saved")
+        setStatusType("success")
+      } catch (e) {
+        setStatus((e as Error).message)
+        setStatusType("error")
+      }
+    },
+    [req]
+  )
+
+  const removeOpenAIKey = useCallback(async () => {
+    try {
+      await req("/api/settings", { action: "openai-remove" })
+      setOpenaiKeyConfigured(false)
+      setStatus("OpenAI key removed")
+      setStatusType("info")
+    } catch (e) {
+      setStatus((e as Error).message)
+      setStatusType("error")
+    }
+  }, [req])
+
+  const removeOpenRouterKey = useCallback(async () => {
+    try {
+      await req("/api/settings", { action: "openrouter-remove" })
+      setOpenrouterKeyConfigured(false)
+      setStatus("OpenRouter key removed")
+      setStatusType("info")
+    } catch (e) {
+      setStatus((e as Error).message)
+      setStatusType("error")
+    }
+  }, [req])
+
+  const saveLlmModel = useCallback(
+    async (model: string) => {
+      try {
+        await req("/api/settings", { action: "llm-model", model })
+        setLlmModel(model)
+        setStatus("Model saved")
+        setStatusType("success")
+      } catch (e) {
+        setStatus((e as Error).message)
+        setStatusType("error")
+      }
+    },
+    [req]
+  )
+
   // Poll for PR updates to detect new comments/change requests
   useEffect(() => {
     if (!repo) return
@@ -408,6 +487,10 @@ export function AppProvider({
         if (!mounted) return
         setClaudeModel(s.claudeModel || "")
         setClaudeCodeAuth(Boolean(s.claudeCodeAuth))
+        setLlmProvider(s.llmProvider || "claude")
+        setOpenaiKeyConfigured(Boolean(s.openaiKey))
+        setOpenrouterKeyConfigured(Boolean(s.openrouterKey))
+        setLlmModel(s.llmModel || "")
         const activeRepoName = initialRepo || s.repo
         if (activeRepoName) setRepo(activeRepoName)
 
@@ -508,6 +591,16 @@ export function AppProvider({
         refreshClaudeCapabilities,
         disconnectGithub,
         removeClaudeKey,
+        llmProvider,
+        saveLlmProvider,
+        openaiKeyConfigured,
+        openrouterKeyConfigured,
+        saveOpenAIKey,
+        saveOpenRouterKey,
+        removeOpenAIKey,
+        removeOpenRouterKey,
+        llmModel,
+        saveLlmModel,
         clearStatus,
       }}
     >

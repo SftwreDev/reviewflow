@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
-import { query } from "@anthropic-ai/claude-agent-sdk"
+import { getProvider } from "@/lib/llm/index"
 import { readCredential } from "@/lib/credentials"
-import { hasClaudeCodeAuth } from "@/lib/claude"
 import { getSkill } from "@/lib/skills"
 import { agentOptions, describeToolUse } from "@/lib/fix-agent"
 import {
@@ -35,15 +34,10 @@ export async function POST(request: NextRequest) {
   if (conflicts.length === 0) return NextResponse.json({ error: "There are no merge conflicts to resolve" }, { status: 400 })
 
   const apiKey = await readCredential("claude-key")
-  if (!apiKey && !(await hasClaudeCodeAuth()))
-    return NextResponse.json(
-      { error: "Claude API key not configured in Settings and no Claude Code login found" },
-      { status: 400 }
-    )
   const skills = Array.isArray(body.skills) ? body.skills.filter((s): s is string => typeof s === "string") : []
   const customPrompt = typeof body.customPrompt === "string" ? body.customPrompt.trim() : ""
   const model =
-    (typeof body.model === "string" && body.model.trim()) || (await readCredential("claude-model")) || "claude-sonnet-4-5"
+    (typeof body.model === "string" && body.model.trim()) || (await readCredential("llm-model")) || (await readCredential("claude-model")) || "claude-sonnet-4-5"
 
   const activeSkills: { name: string; content: string }[] = []
   for (const name of skills) {
@@ -86,7 +80,8 @@ Rules:
       try {
         await neutralizeEscapingSymlinks(session.id)
         let summary = ""
-        const events = query({ prompt, options: agentOptions({ model, worktree, apiKey, abort, maxTurns: 40 }) })
+        const provider = await getProvider()
+        const events = provider.execute({ ...agentOptions({ model, worktree, apiKey, abort, maxTurns: 40 }), prompt })
         for await (const message of events) {
           if (message.type === "assistant") {
             for (const block of message.message.content) {
@@ -95,6 +90,8 @@ Rules:
             }
           } else if (message.type === "result" && message.subtype === "success") {
             summary = message.result
+          } else if (message.type === "error") {
+            throw new Error(message.error)
           }
         }
         send({

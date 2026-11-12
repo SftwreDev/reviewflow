@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
-import { query } from "@anthropic-ai/claude-agent-sdk"
+import { getProvider } from "@/lib/llm/index"
 import { z } from "zod"
 import { readCredential } from "@/lib/credentials"
-import { hasClaudeCodeAuth } from "@/lib/claude"
 import { getSkill } from "@/lib/skills"
 import { ghRest } from "@/lib/github-rest"
 import { agentOptions, describeToolUse } from "@/lib/fix-agent"
@@ -16,6 +15,7 @@ import {
   createWorktree,
   findSession,
   neutralizeEscapingSymlinks,
+  normalizeFeedbackId,
   resetPending,
   saveSession,
   sessionStatus,
@@ -131,11 +131,6 @@ export async function POST(request: NextRequest) {
 
   const apiKey = await readCredential("claude-key")
   const githubToken = await readCredential("github-token")
-  if (!apiKey && !(await hasClaudeCodeAuth()))
-    return NextResponse.json(
-      { error: "Claude API key not configured in Settings and no Claude Code login found" },
-      { status: 400 }
-    )
   if (!githubToken) return NextResponse.json({ error: "GitHub token not configured" }, { status: 401 })
 
   let target: Target[]
@@ -246,7 +241,7 @@ export async function POST(request: NextRequest) {
         .map((s) => `<skill name="${s.name}">\n${s.content}\n</skill>`)
         .join("\n\n")}\n</active-skills>`
     : ""
-  const model = requestedModel || (await readCredential("claude-model")) || "claude-sonnet-4-5"
+  const model = requestedModel || (await readCredential("llm-model")) || (await readCredential("claude-model")) || "claude-sonnet-4-5"
 
   const abort = new AbortController()
   const encoder = new TextEncoder()
@@ -297,9 +292,18 @@ export async function POST(request: NextRequest) {
         const session = workspace
         session.model = model
         session.skills = skills
-        for (const t of target)
-          if (!session.targets.some((x) => x.kind === t.kind && x.id === t.id))
-            session.targets.push({ kind: t.kind, id: t.id, author: t.author, body: t.body, location: t.location })
+        for (const t of target) {
+          const id = normalizeFeedbackId(t.kind, t.id)
+          if (!session.targets.some((x) => x.kind === t.kind && normalizeFeedbackId(x.kind, x.id) === id))
+            session.targets.push({ kind: t.kind, id, author: t.author, body: t.body, location: t.location })
+        }
+        session.lastTargets = target.map((t) => ({
+          kind: t.kind,
+          id: normalizeFeedbackId(t.kind, t.id),
+          author: t.author,
+          body: t.body,
+          location: t.location,
+        }))
         await neutralizeEscapingSymlinks(session.id)
 
         const feedback = target
@@ -319,12 +323,11 @@ Rules:
 
 ${feedback}`
 
-        const events = query({
+        const provider = await getProvider()
+        const events = provider.execute({
+          ...agentOptions({ model, worktree: worktreePath(session.id), apiKey, abort, maxTurns: 40 }),
           prompt,
-          options: {
-            ...agentOptions({ model, worktree: worktreePath(session.id), apiKey, abort, maxTurns: 40 }),
-            outputFormat: { type: "json_schema", schema: responseSchema },
-          },
+          outputFormat: { type: "json_schema", schema: responseSchema },
         })
         let output: unknown
         for await (const message of events) {
@@ -335,12 +338,17 @@ ${feedback}`
             }
           } else if (message.type === "result" && message.subtype === "success") {
             output = message.structured_output
+          } else if (message.type === "error") {
+            throw new Error(message.error)
           }
         }
         if (!output) throw new Error("Claude returned no structured result")
         const validated = resultSchema.parse(output)
-        // Only keep results for items we actually asked about.
-        const results = validated.results.filter((r) => target.some((t) => t.kind === r.kind && t.id === r.id))
+        // Only keep results for items we actually asked about. Normalize ids first: the model can
+        // return numeric GitHub ids as strings.
+        const results = validated.results
+          .map((r) => ({ ...r, id: normalizeFeedbackId(r.kind, r.id) }))
+          .filter((r) => target.some((t) => t.kind === r.kind && normalizeFeedbackId(t.kind, t.id) === r.id))
         const { files, diff, truncated } = await stageAndDiff(session.id)
         const queued = session.queue.length
         if (files.length === 0) {

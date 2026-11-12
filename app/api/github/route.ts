@@ -3,6 +3,7 @@ import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { sameOrigin } from "@/lib/same-origin"
+import { syncPullNotifications } from "@/lib/notifications-store"
 
 export const runtime = "nodejs"
 const dataDir = path.join(process.env.HOME || ".", ".reviewflow")
@@ -66,6 +67,15 @@ function commentedByMe(
     node.issueComments?.nodes.some(mine) ||
     node.reviews?.nodes.some((r) => mine(r) && (r.body.trim() || r.state === "COMMENTED"))
   )
+}
+function reviewedByOthers(node: {
+  author?: { login: string } | null
+  issueComments?: { nodes: Author[] }
+  reviews?: { nodes: Author[] }
+}) {
+  const authorLogin = node.author?.login
+  const byReviewer = (n: Author) => Boolean(n.author?.login) && n.author?.login !== authorLogin
+  return Boolean(node.issueComments?.nodes.some(byReviewer) || node.reviews?.nodes.some(byReviewer))
 }
 export async function GET(request: NextRequest) {
   try {
@@ -131,6 +141,7 @@ export async function GET(request: NextRequest) {
       review_comments?: number
       reviewDecision?: string | null
       commentedByMe?: boolean
+      reviewerActivity?: boolean
     }[] = []
     let after: string | null = null
     for (let i = 0; i < 10; i++) {
@@ -185,11 +196,14 @@ export async function GET(request: NextRequest) {
           review_comments: node.reviewThreads?.nodes?.filter((n: { isResolved: boolean }) => !n.isResolved).length ?? 0,
           reviewDecision: node.reviewDecision ?? null,
           commentedByMe: commentedByMe(node, who.login),
+          reviewerActivity: reviewedByOthers(node),
         })
       }
       if (!connection.pageInfo.hasNextPage) break
       after = connection.pageInfo.endCursor
     }
+    // Bookkeeping for the notifications panel must not fail the pull list.
+    await syncPullNotifications(repo, pulls, who.login).catch(() => [])
     return NextResponse.json({ pulls, user: who.login })
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "GitHub request failed" }, { status: 502 }) }
 }

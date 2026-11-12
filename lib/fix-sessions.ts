@@ -20,6 +20,13 @@ const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 
 export type FeedbackKind = "inline" | "issue" | "review" | "agent"
 export type FeedbackId = number | string
+
+/** Agent JSON may return numeric GitHub ids as strings; normalize before comparing. */
+export function normalizeFeedbackId(kind: FeedbackKind, id: FeedbackId): FeedbackId {
+  if (kind === "agent") return String(id)
+  const numeric = typeof id === "number" ? id : Number(id)
+  return Number.isInteger(numeric) ? numeric : id
+}
 export type FixResult = {
   kind: FeedbackKind
   id: FeedbackId
@@ -53,6 +60,8 @@ export type FixSession = {
   model: string
   skills: string[]
   targets: { kind: FeedbackKind; id: FeedbackId; author: string; body?: string; location?: string }[]
+  /** Targets selected for the latest agent run. Recorded together on approve, including declines. */
+  lastTargets?: { kind: FeedbackKind; id: FeedbackId; author: string; body?: string; location?: string }[]
   summary: string
   results: FixResult[]
   queue: QueuedCommit[]

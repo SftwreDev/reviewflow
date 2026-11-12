@@ -5,6 +5,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { NotificationsPanel } from "@/components/notifications-panel"
 import { useApp } from "@/lib/app-context"
 import { FolderGit2, ChevronRight, GitPullRequest } from "lucide-react"
 
@@ -61,6 +62,7 @@ export function AppHeader() {
       </div>
 
       <div className="flex items-center gap-3">
+        <NotificationsPanel />
         {user && (
           <Badge variant="outline" className="hidden sm:inline-flex gap-1.5 text-xs py-1">
             <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />

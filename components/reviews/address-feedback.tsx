@@ -27,6 +27,7 @@ import type { PullRequestData } from "@/components/pull-requests/pr-header"
 import type { IssueCommentData, ReviewData } from "@/components/pull-requests/pr-overview"
 import type { InlineComment } from "@/components/pull-requests/diff-viewer"
 import { useApp } from "@/lib/app-context"
+import { announceNotificationsChanged } from "@/lib/notification-types"
 import { agentFeedbackId, agentFindingBody, type Review } from "@/lib/review-types"
 import { cn } from "@/lib/utils"
 
@@ -387,6 +388,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       if (data.pushed && data.sha) {
         setDone({ sha: data.sha, posted: data.posted ?? 0, resolved: data.resolved ?? 0, failed: data.failed ?? [] })
         setPhase("done")
+        announceNotificationsChanged()
       } else {
         setNotice(`Committed locally (${data.queued ?? 1} unpushed). Replies are posted when you push.`)
         setOutcome(null)
@@ -453,6 +455,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       const data = await postJson<{ sha: string; posted: number; resolved: number; failed: string[] }>("/api/fixes/push", { sessionId: workspace.id })
       setDone({ sha: data.sha, posted: data.posted, resolved: data.resolved ?? 0, failed: data.failed })
       setPhase("done")
+      announceNotificationsChanged()
       await refreshAddressed()
       await refreshWorkspace()
     } catch (e) {
@@ -479,7 +482,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
   }
 
   const running = phase === "running"
-  const authorOf = (r: FixResult) => items.find((i) => i.kind === r.kind && i.id === r.id)
+  const authorOf = (r: FixResult) => items.find((i) => keyOf(i.kind, i.id) === keyOf(r.kind, r.id))
 
   return (
     <div className="space-y-6 max-w-full min-w-0">

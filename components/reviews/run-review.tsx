@@ -29,6 +29,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover
 import { MarkdownView } from "@/components/markdown-view"
 import { cn } from "@/lib/utils"
 import { useApp } from "@/lib/app-context"
+import { announceNotificationsChanged } from "@/lib/notification-types"
 
 import type { Finding, Review } from "@/lib/review-types"
 
@@ -398,6 +399,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             findings: finalReview.findings || [],
             appliedSkills: finalReview.skills || selectedSkills,
           })
+          announceNotificationsChanged()
           void loadHistory()
           return
         }
@@ -415,6 +417,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
         findings: data.findings || data.review?.findings || [],
         appliedSkills: data.appliedSkills || data.review?.skills || selectedSkills,
       })
+      announceNotificationsChanged()
       void loadHistory()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Review failed")

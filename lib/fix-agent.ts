@@ -1,4 +1,5 @@
-import type { CanUseTool, Options } from "@anthropic-ai/claude-agent-sdk"
+import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk"
+import type { AgentOptions } from "@/lib/llm"
 import { realpath } from "node:fs/promises"
 import path from "node:path"
 
@@ -50,16 +51,14 @@ export function agentOptions(opts: {
   apiKey: string | null
   abort: AbortController
   maxTurns: number
-}): Options {
+}): AgentOptions {
   return {
     model: opts.model,
-    cwd: opts.worktree,
+    worktree: opts.worktree,
+    apiKey: opts.apiKey,
+    abort: opts.abort,
+    maxTurns: opts.maxTurns,
     tools: AGENT_TOOLS,
     canUseTool: worktreeGuard(opts.worktree),
-    permissionMode: "default",
-    settingSources: [],
-    maxTurns: opts.maxTurns,
-    abortController: opts.abort,
-    env: opts.apiKey ? { ...process.env, ANTHROPIC_API_KEY: opts.apiKey } : { ...process.env },
   }
 }

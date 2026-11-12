@@ -58,6 +58,16 @@ export function SpaView() {
     refreshClaudeCapabilities,
     disconnectGithub,
     removeClaudeKey,
+    llmProvider,
+    saveLlmProvider,
+    openaiKeyConfigured,
+    openrouterKeyConfigured,
+    saveOpenAIKey,
+    saveOpenRouterKey,
+    removeOpenAIKey,
+    removeOpenRouterKey,
+    llmModel,
+    saveLlmModel,
     clearStatus,
   } = useApp()
 
@@ -67,6 +77,8 @@ export function SpaView() {
   const [authorFilter, setAuthorFilter] = useState("all")
   const [githubTokenInput, setGithubTokenInput] = useState("")
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
+  const [openaiKeyInput, setOpenaiKeyInput] = useState("")
+  const [openrouterKeyInput, setOpenrouterKeyInput] = useState("")
 
   const authors = useMemo(() => {
     const counts = new Map<string, number>()
@@ -320,91 +332,180 @@ export function SpaView() {
             </CardContent>
           </Card>
 
-          {/* Claude Settings Card */}
+          {/* AI Provider Configuration Card */}
           <Card className="border-border/70 shadow-xs">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Bot className="size-4 text-primary" />
-                <span>Claude API Configuration</span>
+                <span>AI Provider Configuration</span>
               </CardTitle>
               <CardDescription className="text-xs">
-                Anthropic API key used by the autonomous review agent. Leave blank to use the
-                Claude Code login on this device.
+                Choose the LLM provider and API key for the autonomous review agent.
               </CardDescription>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="outline" className="text-[11px]">
-                  {claudeCodeAuth ? "Claude Code auth detected" : "No device login detected"}
-                </Badge>
-              </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Input
-                type="password"
-                placeholder="sk-ant-api03-xxxxxxxx"
-                value={claudeKeyInput}
-                onChange={(e) => setClaudeKeyInput(e.target.value)}
-                className="text-xs font-mono"
-              />
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  onClick={async () => {
-                    await saveClaudeKey(claudeKeyInput, "claude-save")
-                    setClaudeKeyInput("")
-                  }}
-                  disabled={!claudeKeyInput.trim()}
-                >
-                  Save API Key
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void saveClaudeKey(claudeKeyInput, "claude-test")}
-                >
-                  Test API Key
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:bg-destructive/10"
-                  onClick={() => void removeClaudeKey()}
-                >
-                  Remove Key
-                </Button>
-              </div>
-              <div className="space-y-2 border-t border-border/60 pt-3">
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor="claude-model" className="text-xs font-medium text-foreground">
-                    Review model
-                  </label>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 text-[11px]"
-                    onClick={() => void refreshClaudeCapabilities()}
-                  >
-                    <RefreshCw className="size-3" />
-                    Refresh models
-                  </Button>
-                </div>
+              <div className="space-y-2">
+                <label htmlFor="llm-provider" className="text-xs font-medium text-foreground">
+                  Provider
+                </label>
                 <select
-                  id="claude-model"
-                  value={claudeModel}
-                  onChange={(e) => void saveClaudeModel(e.target.value)}
+                  id="llm-provider"
+                  value={llmProvider}
+                  onChange={(e) => void saveLlmProvider(e.target.value)}
                   className="flex h-9 w-full rounded-md border border-input bg-background px-2 text-xs shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50"
                 >
-                  <option value="">Use default</option>
-                  {claudeModels.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.displayName} ({m.value})
-                    </option>
-                  ))}
+                  <option value="claude">Claude</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="openrouter">OpenRouter</option>
                 </select>
-                {claudeModels.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground">
-                    No models loaded. Save a key or log in with Claude Code, then refresh.
-                  </p>
-                )}
+              </div>
+
+              {llmProvider === "claude" && (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className="text-[11px]">
+                      {claudeCodeAuth ? "Claude Code auth detected" : "No device login detected"}
+                    </Badge>
+                  </div>
+                  <Input
+                    type="password"
+                    placeholder="sk-ant-api03-xxxxxxxx"
+                    value={claudeKeyInput}
+                    onChange={(e) => setClaudeKeyInput(e.target.value)}
+                    className="text-xs font-mono"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        await saveClaudeKey(claudeKeyInput, "claude-save")
+                        setClaudeKeyInput("")
+                      }}
+                      disabled={!claudeKeyInput.trim()}
+                    >
+                      Save API Key
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void saveClaudeKey(claudeKeyInput, "claude-test")}
+                    >
+                      Test API Key
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10"
+                      onClick={() => void removeClaudeKey()}
+                    >
+                      Remove Key
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {llmProvider === "openai" && (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className="text-[11px]">
+                      {openaiKeyConfigured ? "OpenAI key configured" : "No OpenAI key configured"}
+                    </Badge>
+                  </div>
+                  <Input
+                    type="password"
+                    placeholder="sk-..."
+                    value={openaiKeyInput}
+                    onChange={(e) => setOpenaiKeyInput(e.target.value)}
+                    className="text-xs font-mono"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        await saveOpenAIKey(openaiKeyInput, "save")
+                        setOpenaiKeyInput("")
+                      }}
+                      disabled={!openaiKeyInput.trim()}
+                    >
+                      Save API Key
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void saveOpenAIKey(openaiKeyInput, "test")}
+                    >
+                      Test API Key
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10"
+                      onClick={() => void removeOpenAIKey()}
+                    >
+                      Remove Key
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              {llmProvider === "openrouter" && (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant="outline" className="text-[11px]">
+                      {openrouterKeyConfigured ? "OpenRouter key configured" : "No OpenRouter key configured"}
+                    </Badge>
+                  </div>
+                  <Input
+                    type="password"
+                    placeholder="sk-or-v1-..."
+                    value={openrouterKeyInput}
+                    onChange={(e) => setOpenrouterKeyInput(e.target.value)}
+                    className="text-xs font-mono"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        await saveOpenRouterKey(openrouterKeyInput, "save")
+                        setOpenrouterKeyInput("")
+                      }}
+                      disabled={!openrouterKeyInput.trim()}
+                    >
+                      Save API Key
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void saveOpenRouterKey(openrouterKeyInput, "test")}
+                    >
+                      Test API Key
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:bg-destructive/10"
+                      onClick={() => void removeOpenRouterKey()}
+                    >
+                      Remove Key
+                    </Button>
+                  </div>
+                </>
+              )}
+
+              <div className="space-y-2 border-t border-border/60 pt-3">
+                <label htmlFor="llm-model" className="text-xs font-medium text-foreground">
+                  Model
+                </label>
+                <Input
+                  id="llm-model"
+                  placeholder="e.g. claude-sonnet-4-5 or gpt-4o"
+                  value={llmModel}
+                  onChange={(e) => void saveLlmModel(e.target.value)}
+                  className="text-xs font-mono"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Leave blank to use the provider default.
+                </p>
               </div>
             </CardContent>
           </Card>

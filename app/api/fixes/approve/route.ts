@@ -6,6 +6,7 @@ import {
   assertNotMerging,
   commitStaged,
   loadSession,
+  normalizeFeedbackId,
   saveSession,
   type FeedbackId,
   type FeedbackKind,
@@ -42,9 +43,10 @@ export async function POST(request: NextRequest) {
   const replies: QueuedReply[] = []
   for (const r of (Array.isArray(body.replies) ? body.replies : []) as Reply[]) {
     if (!r || typeof r.body !== "string" || !r.body.trim()) continue
-    if (!session.targets.some((t) => t.kind === r.kind && t.id === r.id)) continue
-    const status = session.results.find((x) => x.kind === r.kind && x.id === r.id)?.status ?? "partial"
-    replies.push({ kind: r.kind, id: r.id, body: r.body, status })
+    const id = normalizeFeedbackId(r.kind, r.id)
+    if (!session.targets.some((t) => t.kind === r.kind && normalizeFeedbackId(t.kind, t.id) === id)) continue
+    const status = session.results.find((x) => x.kind === r.kind && normalizeFeedbackId(x.kind, x.id) === id)?.status ?? "partial"
+    replies.push({ kind: r.kind, id, body: r.body, status })
   }
 
   try {
@@ -52,12 +54,21 @@ export async function POST(request: NextRequest) {
     const who = await ghRest<{ login: string; id: number }>(token, "/user")
     const sha = await commitStaged(session, message, { login: who.login, userId: who.id })
     if (!sha) throw new Error("No changes to commit")
-    const addressed = session.results
-      .filter((result) => result.status !== "declined")
-      .map((result) => ({ kind: result.kind, id: result.id, status: result.status }))
+    // Record every target selected for this run, not just results the model returned. Declined
+    // targets are addressed too: they leave the inbox and show under "Addressed feedback" with
+    // their reply. Only targets the user did not select stay in the inbox.
+    const runTargets = session.lastTargets ?? session.targets
+    const addressed = runTargets.map((target) => {
+      const id = normalizeFeedbackId(target.kind, target.id)
+      const result = session.results.find(
+        (x) => x.kind === target.kind && normalizeFeedbackId(x.kind, x.id) === id
+      )
+      return { kind: target.kind, id, status: result?.status ?? ("declined" as const) }
+    })
     session.queue.push({ sha, message, replies, addressed })
     session.summary = ""
     session.results = []
+    session.lastTargets = []
     await saveSession(session)
     if (body.push !== true) return NextResponse.json({ queued: session.queue.length, sha })
   } catch (error) {
