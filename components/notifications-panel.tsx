@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
 import {
   AlertTriangle,
   Bell,
@@ -10,6 +10,8 @@ import {
   GitPullRequest,
   MessageSquare,
   Wrench,
+  Volume2,
+  VolumeX,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -67,6 +69,28 @@ const KIND_STYLES: Record<
   },
 }
 
+const SOUND_STORAGE_KEY = "reviewflow:notification-sound"
+const soundListeners = new Set<() => void>()
+
+function subscribeSound(callback: () => void) {
+  soundListeners.add(callback)
+  return () => {
+    soundListeners.delete(callback)
+  }
+}
+
+function getSoundSnapshot() {
+  try {
+    return window.localStorage.getItem(SOUND_STORAGE_KEY) !== "off"
+  } catch {
+    return true
+  }
+}
+
+function getSoundServerSnapshot() {
+  return true
+}
+
 function relativeTime(iso: string) {
   const timestamp = Date.parse(iso)
   if (!Number.isFinite(timestamp)) return ""
@@ -90,6 +114,43 @@ export function NotificationsPanel() {
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const soundEnabled = useSyncExternalStore(
+    subscribeSound,
+    getSoundSnapshot,
+    getSoundServerSnapshot
+  )
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const knownNotifications = useRef<{ repo: string; ids: Set<string> } | null>(null)
+
+  const playBeep = useCallback(() => {
+    try {
+      const AudioContextClass = window.AudioContext
+      if (!AudioContextClass) return
+      const context = audioContextRef.current ?? new AudioContextClass()
+      audioContextRef.current = context
+      if (context.state === "suspended") void context.resume()
+
+      const now = context.currentTime
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = "sine"
+      oscillator.frequency.setValueAtTime(880, now)
+      oscillator.frequency.setValueAtTime(660, now + 0.12)
+      gain.gain.setValueAtTime(0.0001, now)
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01)
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.onended = () => {
+        oscillator.disconnect()
+        gain.disconnect()
+      }
+      oscillator.start(now)
+      oscillator.stop(now + 0.34)
+    } catch {
+      // Audio is optional.
+    }
+  }, [])
 
   const load = useCallback(async () => {
     if (!repo) return
@@ -107,14 +168,26 @@ export function NotificationsPanel() {
       }
       if (!response.ok)
         throw new Error(data.error || `Request failed with ${response.status}`)
-      setNotifications(data.notifications ?? [])
+      const list = data.notifications ?? []
+      const known = knownNotifications.current
+      if (known && known.repo === repo) {
+        const fresh = list.some(
+          (notification) => !notification.readAt && !known.ids.has(notification.id)
+        )
+        if (fresh && getSoundSnapshot()) playBeep()
+      }
+      knownNotifications.current = {
+        repo,
+        ids: new Set(list.map((notification) => notification.id)),
+      }
+      setNotifications(list)
       setError("")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load notifications")
     } finally {
       setLoading(false)
     }
-  }, [repo])
+  }, [repo, playBeep])
 
   useEffect(() => {
     if (!repo) return
@@ -137,6 +210,43 @@ export function NotificationsPanel() {
     return () =>
       window.removeEventListener(NOTIFICATIONS_CHANGED_EVENT, refresh)
   }, [load])
+
+  useEffect(() => {
+    const unlock = () => {
+      try {
+        const AudioContextClass = window.AudioContext
+        if (!AudioContextClass) return
+        const context = audioContextRef.current ?? new AudioContextClass()
+        audioContextRef.current = context
+        if (context.state === "suspended") void context.resume()
+        // iOS/Safari only unlock audio that actually starts inside a gesture.
+        const buffer = context.createBuffer(1, 1, 22_050)
+        const source = context.createBufferSource()
+        source.buffer = buffer
+        source.connect(context.destination)
+        source.start(0)
+      } catch {
+        // Audio is optional.
+      }
+    }
+    window.addEventListener("pointerdown", unlock, { once: true, capture: true })
+    window.addEventListener("keydown", unlock, { once: true, capture: true })
+    return () => {
+      window.removeEventListener("pointerdown", unlock)
+      window.removeEventListener("keydown", unlock)
+    }
+  }, [])
+
+  const toggleSound = () => {
+    const next = !getSoundSnapshot()
+    try {
+      window.localStorage.setItem(SOUND_STORAGE_KEY, next ? "on" : "off")
+    } catch {
+      // Preference persistence is optional.
+    }
+    for (const listener of soundListeners) listener()
+    if (next) playBeep()
+  }
 
   const visible = notifications.filter(
     (notification) => notification.repo === repo
@@ -231,16 +341,28 @@ export function NotificationsPanel() {
               </span>
             )}
           </div>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={() => void markAllRead()}
-            disabled={unread === 0}
-            className="gap-1 text-[11px]"
-          >
-            <CheckCheck className="size-3" />
-            Mark all read
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={toggleSound}
+              aria-label={soundEnabled ? "Mute notification sounds" : "Enable notification sounds"}
+              title={soundEnabled ? "Mute notification sounds" : "Enable notification sounds"}
+              className="h-6 w-6 p-0"
+            >
+              {soundEnabled ? <Volume2 className="size-3.5" /> : <VolumeX className="size-3.5" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => void markAllRead()}
+              disabled={unread === 0}
+              className="gap-1 text-[11px]"
+            >
+              <CheckCheck className="size-3" />
+              Mark all read
+            </Button>
+          </div>
         </div>
 
         <div className="max-h-[min(70vh,420px)] overflow-y-auto p-1.5">
