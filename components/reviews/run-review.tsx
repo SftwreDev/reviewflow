@@ -382,7 +382,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                 error?: string
               }
               if (parsed.type === "log") {
-                setLogs((prev) => [...prev, JSON.stringify(parsed.message)])
+                const message =
+                  typeof parsed.message === "string" ? parsed.message : JSON.stringify(parsed.message)
+                setLogs((prev) => [...prev, message])
               } else if (parsed.type === "result" && parsed.review) {
                 finalReview = parsed.review
               } else if (parsed.type === "error") {
@@ -686,8 +688,8 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
             <h3 className="text-sm font-semibold">Live Agent Logs</h3>
           </CardHeader>
           <CardContent>
-            <pre className="max-h-80 overflow-auto rounded-md bg-muted/40 p-3 text-[10px] leading-relaxed text-muted-foreground">
-              {logs.join("\n")}
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-[10px] leading-relaxed text-muted-foreground">
+              {logs.join("\n") || "Starting…"}
             </pre>
           </CardContent>
         </Card>

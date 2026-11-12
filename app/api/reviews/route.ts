@@ -7,6 +7,7 @@ import { addNotification } from "@/lib/notifications-store"
 import { getSkill } from "@/lib/skills"
 import type { TokenUsage } from "@/lib/review-types"
 import { sameOrigin } from "@/lib/same-origin"
+import { describeToolUse } from "@/lib/fix-agent"
 export const runtime = "nodejs"
 
 const findingSchema = z.object({
@@ -188,6 +189,10 @@ ${s.content}
           controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
         try {
           const provider = await getProvider()
+          send({
+            type: "log",
+            message: `Reviewing ${files.length} changed file${files.length === 1 ? "" : "s"} with ${model}…`,
+          })
           const events = provider.execute({
             prompt,
             model,
@@ -205,8 +210,15 @@ ${s.content}
           let output: unknown
           let tokenUsage: TokenUsage | undefined
           for await (const message of events) {
-            send({ type: "log", message })
-            if (message.type === "result" && message.subtype === "success") {
+            if (message.type === "assistant") {
+              for (const block of message.message.content) {
+                if (block.type === "tool_use") {
+                  send({ type: "log", message: describeToolUse(block.name, block.input) })
+                } else if (block.type === "text" && block.text.trim()) {
+                  send({ type: "log", message: block.text.trim().slice(0, 300) })
+                }
+              }
+            } else if (message.type === "result" && message.subtype === "success") {
               output = message.structured_output
               tokenUsage = message.usage
             } else if (message.type === "error") {
@@ -219,6 +231,10 @@ ${s.content}
             return
           }
           const validated = resultSchema.parse(output)
+          send({
+            type: "log",
+            message: `Review complete: ${validated.findings.length} finding${validated.findings.length === 1 ? "" : "s"}.`,
+          })
           const review = await saveReview({
             repo,
             number,
