@@ -941,16 +941,6 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                       {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
                       {resultPosting ? "Posting..." : `Post selected (${selectedFindingIndexes.length})`}
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={resultPosting}
-                      onClick={() => void postToPr("COMMENT")}
-                      className="h-7 gap-1.5 text-xs"
-                    >
-                      {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                      {resultPosting ? "Posting..." : "Post all"}
-                    </Button>
                   </>
                 )
               ) : null}
