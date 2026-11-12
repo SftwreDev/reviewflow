@@ -34,6 +34,7 @@ export type Pull = {
   comments?: number
   review_comments?: number
   reviewDecision?: string | null
+  commentedByMe?: boolean
 }
 
 export type RepoLabel = { name: string; color: string }

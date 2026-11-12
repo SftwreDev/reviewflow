@@ -10,11 +10,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   GitPullRequest,
   GitMerge,
   GitPullRequestClosed,
   MessageSquareWarning,
+  MessageCircle,
   RefreshCw,
   Bot,
   GitBranch,
@@ -62,10 +64,23 @@ export function SpaView() {
   const [query, setQuery] = useState("")
   const [repoSearch, setRepoSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "merged" | "closed">("all")
+  const [authorFilter, setAuthorFilter] = useState("all")
   const [githubTokenInput, setGithubTokenInput] = useState("")
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
 
-  // Filter pulls by query and state
+  const authors = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const p of pulls) {
+      const login = p.user.login || "unknown"
+      counts.set(login, (counts.get(login) ?? 0) + 1)
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [pulls])
+
+  // Reset a stale author selection (e.g. after switching repositories)
+  const activeAuthor = authors.some(([login]) => login === authorFilter) ? authorFilter : "all"
+
+  // Filter pulls by query, state and author
   const visiblePulls = useMemo(() => {
     return pulls.filter((p) => {
       const matchesQuery =
@@ -74,12 +89,14 @@ export function SpaView() {
         p.head.ref.toLowerCase().includes(query.toLowerCase())
       if (!matchesQuery) return false
 
+      if (activeAuthor !== "all" && (p.user.login || "unknown") !== activeAuthor) return false
+
       if (statusFilter === "open") return p.state === "open" && !p.merged_at
       if (statusFilter === "merged") return Boolean(p.merged_at)
       if (statusFilter === "closed") return p.state === "closed" && !p.merged_at
       return true
     })
-  }, [pulls, query, statusFilter])
+  }, [pulls, query, statusFilter, activeAuthor])
 
   const openCount = useMemo(
     () => pulls.filter((p) => p.state === "open" && !p.merged_at).length,
@@ -538,7 +555,21 @@ export function SpaView() {
               />
             </div>
 
-            {/* Label filter temporarily hidden. */}
+            <Select value={activeAuthor} onValueChange={(v) => setAuthorFilter(v ?? "all")}>
+              <SelectTrigger size="sm" className="h-8 w-48 text-xs" aria-label="Filter by author">
+                <SelectValue>
+                  {(v: string) => (v === "all" ? "All authors" : v)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent align="start" alignItemWithTrigger={false}>
+                <SelectItem value="all">All authors ({pulls.length})</SelectItem>
+                {authors.map(([login, count]) => (
+                  <SelectItem key={login} value={login}>
+                    {login} ({count})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             {/* Status Filter Buttons */}
             <div className="inline-flex rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs">
@@ -637,6 +668,12 @@ export function SpaView() {
                                 <span>
                                   {p.reviewDecision === "CHANGES_REQUESTED" ? "Changes requested" : `${(p.comments ?? 0) + (p.review_comments ?? 0)} unresolved`}
                                 </span>
+                              </Badge>
+                            ) : null}
+                            {p.commentedByMe ? (
+                              <Badge className="bg-sky-500/15 text-sky-700 dark:text-sky-300 border-sky-500/30 gap-1 text-[10px] font-semibold">
+                                <MessageCircle className="size-3" />
+                                <span>You commented</span>
                               </Badge>
                             ) : null}
                           </div>

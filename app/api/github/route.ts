@@ -53,6 +53,22 @@ async function originOK(request: NextRequest) {
   const origin = request.headers.get("origin")
   return !origin || origin === new URL(request.url).origin
 }
+type Author = { author: { login: string } | null }
+function commentedByMe(
+  node: {
+    issueComments?: { nodes: Author[] }
+    reviews?: { nodes: (Author & { body: string })[] }
+    reviewThreads?: { nodes: { comments: { nodes: Author[] } }[] }
+  },
+  login: string
+) {
+  const mine = (n: Author) => n.author?.login === login
+  return Boolean(
+    node.issueComments?.nodes.some(mine) ||
+    node.reviews?.nodes.some((r) => mine(r) && r.body.trim()) ||
+    node.reviewThreads?.nodes.some((t) => t.comments.nodes.some(mine))
+  )
+}
 export async function GET(request: NextRequest) {
   try {
     const token = await getToken()
@@ -116,6 +132,7 @@ export async function GET(request: NextRequest) {
       comments?: number
       review_comments?: number
       reviewDecision?: string | null
+      commentedByMe?: boolean
     }[] = []
     let after: string | null = null
     for (let i = 0; i < 10; i++) {
@@ -139,8 +156,10 @@ export async function GET(request: NextRequest) {
                 baseRefName
                 labels(first: 10) { nodes { name color } }
                 reviewDecision
-                reviewThreads(first: 100) { nodes { isResolved } }
                 comments(first: 0) { totalCount }
+                issueComments: comments(last: 30) { nodes { author { login } } }
+                reviews(last: 30) { nodes { author { login } body } }
+                reviewThreads(first: 100) { nodes { isResolved comments(first: 10) { nodes { author { login } } } } }
               }
               pageInfo { hasNextPage endCursor }
             }
@@ -167,6 +186,7 @@ export async function GET(request: NextRequest) {
           comments: node.comments?.totalCount ?? 0,
           review_comments: node.reviewThreads?.nodes?.filter((n: { isResolved: boolean }) => !n.isResolved).length ?? 0,
           reviewDecision: node.reviewDecision ?? null,
+          commentedByMe: commentedByMe(node, who.login),
         })
       }
       if (!connection.pageInfo.hasNextPage) break
