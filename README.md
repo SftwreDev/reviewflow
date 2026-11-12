@@ -4,40 +4,42 @@ Agent-powered code review app. Install directly from a git repository.
 
 ## Install from git
 
+Inside the project you want to review:
+
 ```bash
-# into a project
 npm install https://github.com/SftwreDev/reviewflow.git
-npx reviewflow --port 3000
-
-# or globally (puts `reviewflow` on your PATH)
-npm install -g https://github.com/SftwreDev/reviewflow.git
-reviewflow --port 3000
+reviewflow --port 3001
 ```
 
-A project-local install does not add `reviewflow` to your PATH, so call it with `npx reviewflow`
-(or add `"reviewflow": "reviewflow --port 3000"` to your `package.json` scripts). Running bare
-`reviewflow` after a project-local install fails with `command not found` — only `npm install -g`
-creates the global shim.
+The install adds a `reviewflow` launcher to the first writable directory on your `PATH` under your
+home (preferring `~/.local/bin`). The launcher walks up from the current directory and runs the copy
+installed in that project, so a plain local install is enough and two projects on different versions
+never collide. Nothing is installed globally. Uninstall the dependency and the launcher just reports
+that the project has no ReviewFlow.
 
-A project-local install borrows the host project's dependency tree, so the host must already run the
-same React major as ReviewFlow (React 19). npm nests ReviewFlow's React under
-`node_modules/reviewflow/node_modules` when the host is on React 18, and one build cannot span two
-React majors — the CLI stops early and says so instead of failing mid-build. Global installs are
-unaffected: they keep ReviewFlow's own tree.
+Set `REVIEWFLOW_NO_SHIM=1` to skip the launcher, then call `npx reviewflow` or
+`node_modules/.bin/reviewflow`.
 
-The install is large and slow on purpose: `@anthropic-ai/claude-agent-sdk` ships a bundled Claude
-Code CLI (~340 MB) and Next.js adds ~200 MB, so a fresh tree is ~1.1 GB / ~540 packages. Skipping the
-audit round-trip helps:
+Global install (adds to your npm global bin instead):
 
 ```bash
-npm install -g --no-audit --no-fund https://github.com/SftwreDev/reviewflow.git
+npm install -g https://github.com/SftwreDev/reviewflow.git
+reviewflow --port 3001
 ```
 
-Install once globally; every later run starts the app without re-resolving dependencies.
+A local install builds against the host project's dependency tree, so the host must be on the same
+React major ReviewFlow ships (React 19 — also the Next.js 16 baseline). On React 17/18 npm nests
+ReviewFlow's React under `node_modules/reviewflow/node_modules`, two React copies end up in one
+build, and the CLI stops before building with the upgrade command printed. Global installs are
+unaffected: they keep their own tree.
 
 The app builds on first run and rebuilds when its source changes. Because Next.js will not compile
 TypeScript inside `node_modules`, a local install builds from a copy in `.reviewflow-app/` next to your
 `node_modules` (git-ignored). The app reads `.claude/skills` from the directory where you run the command.
+
+The install is large on purpose: `@anthropic-ai/claude-agent-sdk` ships a bundled Claude Code CLI
+(~340 MB) and Next.js adds ~200 MB, so a fresh tree is ~1.1 GB / ~540 packages. Add
+`--no-audit --no-fund` to skip the audit round-trip.
 
 ## Agent Review options
 

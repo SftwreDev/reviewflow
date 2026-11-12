@@ -55,14 +55,13 @@ if (inNodeModules) {
   const hostMajor = hostReact?.split(".")[0]
   if (ownMajor && hostMajor && ownMajor !== hostMajor) {
     console.error(
-      `ReviewFlow runs on React ${ownMajor}, but ${projectRoot} resolves React ${hostReact}.\n` +
-        `Next.js cannot build this app against two React majors, so a project-local install only works\n` +
-        `when the host is already on React ${ownMajor}. Pick one:\n\n` +
-        `  install ReviewFlow globally, keeping its own React tree:\n` +
-        `    npm install -g --no-audit --no-fund https://github.com/SftwreDev/reviewflow.git\n` +
-        `    reviewflow --port ${port}\n\n` +
-        `  or upgrade this project to React ${ownMajor}:\n` +
-        `    npm install react@${ownMajor} react-dom@${ownMajor} @types/react@${ownMajor} @types/react-dom@${ownMajor}\n`,
+      `ReviewFlow builds against React ${ownMajor}, but ${projectRoot} resolves React ${hostReact}.\n` +
+        `npm nests ours under node_modules/reviewflow, and one Next.js build cannot span two React\n` +
+        `majors. Upgrade the project (Next.js 16 targets React 19):\n\n` +
+        `  npm install react@19 react-dom@19 @types/react@19 @types/react-dom@19\n\n` +
+        `or install ReviewFlow globally so it keeps its own React tree:\n\n` +
+        `  npm install -g --no-audit --no-fund https://github.com/SftwreDev/reviewflow.git\n` +
+        `  reviewflow --port ${port}\n`,
     )
     process.exit(1)
   }

@@ -13,6 +13,7 @@
     "hooks",
     "lib",
     "public",
+    "scripts",
     "next.config.ts",
     "postcss.config.mjs",
     "tsconfig.json",
@@ -31,7 +32,8 @@
     "start": "next start",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/install-shim.mjs"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.322",
