@@ -15,6 +15,7 @@ import {
   XCircle,
   Clock,
   Sparkles,
+  RefreshCw,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -60,6 +61,8 @@ interface PRHeaderProps {
   pr: PullRequestData
   repo: string
   checks?: CheckRun[]
+  onRefresh?: () => void
+  refreshing?: boolean
   onRunAgentReviewClick?: () => void
   onBack?: () => void
 }
@@ -68,6 +71,8 @@ export function PRHeader({
   pr,
   repo,
   checks = [],
+  onRefresh,
+  refreshing = false,
   onRunAgentReviewClick,
   onBack,
 }: PRHeaderProps) {
@@ -134,6 +139,19 @@ export function PRHeader({
           </div>
 
           <div className="flex items-center gap-2">
+            {onRefresh && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="h-8 gap-1.5 text-xs font-medium shadow-2xs"
+              >
+                <RefreshCw className={refreshing ? "size-3.5 animate-spin" : "size-3.5"} />
+                <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
+              </Button>
+            )}
+
             {onRunAgentReviewClick && (
               <Button
                 variant="outline"

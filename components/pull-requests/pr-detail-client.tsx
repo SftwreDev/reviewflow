@@ -42,7 +42,7 @@ export function PRDetailClient({
   checks = [],
   onBack,
 }: PRDetailClientProps) {
-  const { user, openPr } = useApp()
+  const { user, openPr, refreshActivePr, isLoadingPr } = useApp()
   const [activeTab, setActiveTab] = useState<"overview" | "files" | "ai" | "fix" | "checks">("overview")
   const canFix = Boolean(user) && pr.user.login === user && pr.state === "open" && !pr.merged_at
 
@@ -72,6 +72,8 @@ export function PRDetailClient({
         pr={pr}
         repo={repo}
         checks={checks}
+        onRefresh={() => void refreshActivePr()}
+        refreshing={isLoadingPr}
         onRunAgentReviewClick={() => setActiveTab("ai")}
         onBack={onBack}
       />
