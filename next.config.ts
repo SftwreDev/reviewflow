@@ -6,6 +6,10 @@ const nextConfig: NextConfig = {
   // The Claude Agent SDK bundles a large native CLI per platform; keep it a normal npm dependency so
   // npm resolves the right binary instead of tracing one platform's copy into the bundle.
   serverExternalPackages: ["@anthropic-ai/claude-agent-sdk"],
+  experimental: {
+    // Keep security advisories surfaced for future `next upgrade --agent` runs.
+    agentUpgrade: "security",
+  },
 }
 
 export default nextConfig
