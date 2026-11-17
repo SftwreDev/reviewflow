@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { lstat } from "node:fs/promises"
 import { getDefaultModel, getProvider } from "@/lib/llm/index"
 import { z } from "zod"
 import { readCredential } from "@/lib/credentials"
@@ -260,7 +261,12 @@ export async function POST(request: NextRequest) {
     resultEvent: (session) => ({ type: "result", result: session }),
     run: async ({ send, abort }) => {
       try {
-        await cleanupStaleSessions()
+        await cleanupStaleSessions(workspace?.id)
+        if (workspace && !(await lstat(worktreePath(workspace.id)).catch(() => null))) {
+          // The session record outlived its worktree; start fresh instead of failing on a missing cwd.
+          await cleanupSession(workspace.id)
+          workspace = null
+        }
         if (workspace) {
           send({ type: "log", message: `Reusing local workspace (${workspace.queue.length} unpushed commit${workspace.queue.length === 1 ? "" : "s"})…` })
           await resetPending(workspace.id)

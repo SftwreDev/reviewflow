@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
+import { existsSync } from "node:fs"
 import { lstat, mkdir, readFile, readdir, readlink, realpath, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -17,6 +18,25 @@ const CONFLICT_MARKER_RE = /^(<{7}|>{7})( |$)/m
 
 export const REPO_RE = /^[\w.-]+\/[\w.-]+$/
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+// A server launched from Finder or a GUI app inherits a minimal PATH without Homebrew, so a bare
+// "git" spawn fails with ENOENT. Resolve the binary once and expose the standard bin dirs to the
+// child process so git's own helpers resolve too.
+const GIT_BIN =
+  ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/usr/bin/git"].find((candidate) => existsSync(candidate)) ?? "git"
+const CHILD_PATH = [
+  ...new Set([
+    ...(process.env.PATH ?? "").split(path.delimiter).filter(Boolean),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+  ]),
+].join(path.delimiter)
+
+// The agent subprocess inherits process.env, so fix the server PATH once instead of only the
+// child env: a GUI-launched server would otherwise fail any git call the agent makes.
+process.env.PATH = CHILD_PATH
 
 export type FeedbackKind = "inline" | "issue" | "review" | "agent"
 export type FeedbackId = number | string
@@ -91,8 +111,14 @@ function sessionFile(id: string) {
 // Isolated from the user's git config (signing, credential helpers, hooks). The token is passed
 // through the environment so it never appears in argv, remote URLs or .git/config.
 export async function git(args: string[], opts: { cwd?: string; token?: string } = {}) {
+  // Node reports a missing binary and a missing cwd as the same "spawn git ENOENT". Check the
+  // worktree first so a deleted workspace is not mistaken for a missing git install.
+  if (opts.cwd && !existsSync(opts.cwd)) {
+    throw new Error(`Local workspace not found: ${opts.cwd}. Discard the local fixes and try again.`)
+  }
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    PATH: CHILD_PATH,
     GIT_TERMINAL_PROMPT: "0",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
@@ -103,14 +129,17 @@ export async function git(args: string[], opts: { cwd?: string; token?: string }
     env.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${opts.token}`).toString("base64")}`
   }
   try {
-    const { stdout } = await execFileAsync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+    const { stdout } = await execFileAsync(GIT_BIN, ["-c", "core.hooksPath=/dev/null", ...args], {
       cwd: opts.cwd,
       env,
       maxBuffer: 64 * 1024 * 1024,
     })
     return stdout
   } catch (error) {
-    const e = error as { stderr?: string; stdout?: string; message?: string }
+    const e = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string }
+    if (e.code === "ENOENT" && opts.cwd && !existsSync(opts.cwd)) {
+      throw new Error(`Local workspace not found: ${opts.cwd}. Discard the local fixes and try again.`)
+    }
     throw new Error(e.stderr?.trim() || e.stdout?.trim() || e.message || "git failed")
   }
 }
@@ -174,8 +203,9 @@ export async function cleanupSession(id: string) {
 }
 
 /** Removes abandoned sessions. Sessions holding unpushed commits or a merge in progress are never auto-removed. */
-export async function cleanupStaleSessions() {
+export async function cleanupStaleSessions(keepId?: string) {
   for (const id of await listSessionIds()) {
+    if (id === keepId) continue
     const session = await loadSession(id)
     if (!session) {
       await cleanupSession(id)
