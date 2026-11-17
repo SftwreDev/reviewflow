@@ -30,6 +30,7 @@ import { MarkdownView } from "@/components/markdown-view"
 import { cn } from "@/lib/utils"
 import { useApp } from "@/lib/app-context"
 import { announceNotificationsChanged } from "@/lib/notification-types"
+import { startJob, useAgentJob } from "@/lib/agent-jobs"
 
 import type { Finding, Review, ReviewPost } from "@/lib/review-types"
 
@@ -297,9 +298,23 @@ interface RunReviewProps {
 
 export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProps) {
   const { llmProvider, claudeModel, claudeModels, llmModel } = useApp()
-  const [busy, setBusy] = useState(false)
+  const job = useAgentJob("review", repo, number)
+  const busy = job.status === "running"
   const [error, setError] = useState("")
-  const [result, setResult] = useState<{ id?: string; headSha: string; findings: Finding[]; appliedSkills?: string[]; posted?: ReviewPost } | null>(null)
+  const [localResult, setResult] = useState<{ id?: string; headSha: string; findings: Finding[]; appliedSkills?: string[]; posted?: ReviewPost } | null>(null)
+  const jobReview = job.status === "done" && job.result ? (job.result as Review) : null
+  const jobError = job.status === "error" ? job.error : ""
+  const result =
+    localResult ??
+    (jobReview
+      ? {
+          id: jobReview.id,
+          headSha: jobReview.headSha,
+          findings: jobReview.findings,
+          appliedSkills: jobReview.skills,
+          posted: jobReview.posted,
+        }
+      : null)
   const [severityFilter, setSeverityFilter] = useState<string>("all")
   const [copiedFixIndex, setCopiedFixIndex] = useState<number | null>(null)
   const [copiedReview, setCopiedReview] = useState(false)
@@ -312,8 +327,12 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const [bulkPosting, setBulkPosting] = useState(false)
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([])
   const [selectedFindingIndexes, setSelectedFindingIndexes] = useState<number[]>([])
+  const selectedFindings = localResult
+    ? selectedFindingIndexes
+    : jobReview
+      ? remainingFindingIndexes(jobReview.findings, jobReview.posted)
+      : selectedFindingIndexes
   const [postNotice, setPostNotice] = useState("")
-  const [logs, setLogs] = useState<string[]>([])
   const [history, setHistory] = useState<Review[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
@@ -363,99 +382,32 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     }
   }, [loadHistory])
 
+  // A review that finished while this tab was unmounted is read straight from the job store, so
+  // only the external notification/history refresh needs an effect.
+  useEffect(() => {
+    if (job.status !== "done") return
+    const timer = setTimeout(() => {
+      announceNotificationsChanged()
+      void loadHistory()
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [job.id, job.status, loadHistory])
+
   async function run() {
-    setBusy(true)
     setError("")
     setResult(null)
     setSelectedFindingIndexes([])
     setPostNotice("")
-    setLogs([])
     try {
-      const response = await fetch("/api/reviews", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ repo, number, skills: selectedSkills, customPrompt, model: effectiveModel }),
+      await startJob("review", repo, number, {
+        repo,
+        number,
+        skills: selectedSkills,
+        customPrompt,
+        model: effectiveModel,
       })
-      if (!response.ok) {
-        const errData = (await response.json().catch(() => ({ error: `Request failed with ${response.status}` }))) as { error?: string }
-        throw new Error(errData.error || "Review failed")
-      }
-
-      const contentType = response.headers.get("content-type") || ""
-      if (contentType.includes("application/x-ndjson")) {
-        const reader = response.body?.getReader()
-        if (!reader) throw new Error("Review stream unavailable")
-        const decoder = new TextDecoder()
-        let buffer = ""
-        let finalReview: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[]; posted?: ReviewPost } | null = null
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split("\n")
-          buffer = lines.pop() ?? ""
-          for (const line of lines) {
-            if (!line.trim()) continue
-            try {
-              const parsed = JSON.parse(line) as {
-                type?: string
-                message?: unknown
-                review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[]; posted?: ReviewPost }
-                error?: string
-              }
-              if (parsed.type === "log") {
-                const message =
-                  typeof parsed.message === "string" ? parsed.message : JSON.stringify(parsed.message)
-                setLogs((prev) => [...prev, message])
-              } else if (parsed.type === "result" && parsed.review) {
-                finalReview = parsed.review
-              } else if (parsed.type === "error") {
-                throw new Error(parsed.error || "Review failed")
-              }
-            } catch (err) {
-              if (err instanceof Error && !err.message.includes("JSON")) throw err
-            }
-          }
-        }
-        if (finalReview) {
-          const streamedFindings = finalReview.findings || []
-          setResult({
-            id: finalReview.id,
-            headSha: finalReview.headSha || headSha,
-            findings: streamedFindings,
-            appliedSkills: finalReview.skills || selectedSkills,
-            posted: finalReview.posted,
-          })
-          setSelectedFindingIndexes(remainingFindingIndexes(streamedFindings, finalReview.posted))
-          setPostNotice("")
-          announceNotificationsChanged()
-          void loadHistory()
-          return
-        }
-      }
-
-      const data = (await response.json()) as {
-        headSha?: string
-        findings?: Finding[]
-        appliedSkills?: string[]
-        review?: { id?: string; headSha?: string; findings?: Finding[]; skills?: string[]; posted?: ReviewPost }
-      }
-      const jsonFindings = data.findings || data.review?.findings || []
-      setResult({
-        id: data.review?.id,
-        headSha: data.headSha || data.review?.headSha || headSha,
-        findings: jsonFindings,
-        appliedSkills: data.appliedSkills || data.review?.skills || selectedSkills,
-        posted: data.review?.posted,
-      })
-      setSelectedFindingIndexes(remainingFindingIndexes(jsonFindings, data.review?.posted))
-      setPostNotice("")
-      announceNotificationsChanged()
-      void loadHistory()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Review failed")
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -524,9 +476,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
     try {
       const posted = await postReview(result.id, event, indexes)
       if (!posted) throw new Error("Review was posted but its status was not saved")
-      setResult((prev) => (prev ? { ...prev, posted } : prev))
+      setResult((prev) => ({ ...(prev ?? result), posted }))
       setHistory((prev) => prev.map((review) => (review.id === result.id ? { ...review, posted } : review)))
-      setSelectedFindingIndexes((prev) => prev.filter((index) => !indexes.includes(index)))
+      setSelectedFindingIndexes(selectedFindings.filter((index) => !indexes.includes(index)))
       setPostNotice(`Posted ${indexes.length} finding${indexes.length === 1 ? "" : "s"} to PR.`)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to post review to PR")
@@ -541,9 +493,9 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
       const posted = await postReview(review.id, "COMMENT", indexes)
       if (!posted) throw new Error("Review was posted but its status was not saved")
       setHistory((prev) => prev.map((item) => (item.id === review.id ? { ...item, posted } : item)))
-      setResult((prev) => (prev?.id === review.id ? { ...prev, posted } : prev))
       if (result?.id === review.id) {
-        setSelectedFindingIndexes((prev) => prev.filter((index) => !indexes.includes(index)))
+        setResult({ ...result, posted })
+        setSelectedFindingIndexes(selectedFindings.filter((index) => !indexes.includes(index)))
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to post review to PR")
@@ -585,8 +537,10 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
 
   const toggleFindingSelection = (index: number) => {
     if (resultPostedIndexes.has(index)) return
-    setSelectedFindingIndexes((prev) =>
-      prev.includes(index) ? prev.filter((item) => item !== index) : [...prev, index]
+    setSelectedFindingIndexes(
+      selectedFindings.includes(index)
+        ? selectedFindings.filter((item) => item !== index)
+        : [...selectedFindings, index]
     )
   }
 
@@ -602,7 +556,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
   const selectedUnpostedCount = selectedReviewIds.filter((id) => selectableReviewIds.includes(id)).length
   const allFindingsSelected =
     remainingFindings.length > 0 &&
-    remainingFindings.every((index) => selectedFindingIndexes.includes(index))
+    remainingFindings.every((index) => selectedFindings.includes(index))
   const criticalCount = findings.filter((f) => f.severity === "critical").length
   const highCount = findings.filter((f) => f.severity === "high").length
   const mediumCount = findings.filter((f) => f.severity === "medium").length
@@ -702,10 +656,10 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
           </div>
         </div>
 
-        {error && (
+        {(error || jobError) && (
           <div className="border-t border-destructive/20 bg-destructive/10 px-6 py-3 text-xs text-destructive flex items-center gap-2">
             <AlertTriangle className="size-4 shrink-0" />
-            <span>{error}</span>
+            <span>{error || jobError}</span>
           </div>
         )}
       </Card>
@@ -860,7 +814,6 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                         })
                         setSelectedFindingIndexes(remainingFindingIndexes(review.findings, review.posted))
                         setPostNotice("")
-                        setLogs([])
                       }}
                       className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left"
                     >
@@ -909,14 +862,14 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
       </Card>
 
       {/* Live Logs */}
-      {(busy || logs.length > 0) && (
+      {(busy || job.logs.length > 0) && (
         <Card className="border-border/70 shadow-xs">
           <CardHeader className="py-3">
             <h3 className="text-sm font-semibold">Live Agent Logs</h3>
           </CardHeader>
           <CardContent>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-[10px] leading-relaxed text-muted-foreground">
-              {logs.join("\n") || "Starting…"}
+              {job.logs.join("\n") || "Starting…"}
             </pre>
           </CardContent>
         </Card>
@@ -986,12 +939,12 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={resultPosting || selectedFindingIndexes.length === 0}
-                      onClick={() => void postToPr("COMMENT", selectedFindingIndexes)}
+                      disabled={resultPosting || selectedFindings.length === 0}
+                      onClick={() => void postToPr("COMMENT", selectedFindings)}
                       className="h-7 gap-1.5 text-xs"
                     >
                       {resultPosting ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
-                      {resultPosting ? "Posting..." : `Post selected (${selectedFindingIndexes.length})`}
+                      {resultPosting ? "Posting..." : `Post selected (${selectedFindings.length})`}
                     </Button>
                   )}
                 </>
@@ -1087,7 +1040,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                 Select all unposted findings
               </label>
               <span className="text-muted-foreground">
-                {selectedFindingIndexes.length} of {remainingFindings.length} selected
+                {selectedFindings.length} of {remainingFindings.length} selected
               </span>
             </div>
           )}
@@ -1105,7 +1058,7 @@ export function RunReview({ repo, number, headSha, onJumpToFile }: RunReviewProp
                     <div className="flex flex-wrap items-center justify-between gap-3 min-w-0">
                       <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         <Checkbox
-                          checked={selectedFindingIndexes.includes(index)}
+                          checked={selectedFindings.includes(index)}
                           disabled={resultPostedIndexes.has(index)}
                           onCheckedChange={() => toggleFindingSelection(index)}
                           aria-label="Select finding"

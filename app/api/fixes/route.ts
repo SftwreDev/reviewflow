@@ -26,6 +26,7 @@ import {
   type FixSession,
 } from "@/lib/fix-sessions"
 import { sameOrigin } from "@/lib/same-origin"
+import { startJob } from "@/lib/background-jobs"
 export const runtime = "nodejs"
 
 const MAX_TARGETS = 50
@@ -244,8 +245,6 @@ export async function POST(request: NextRequest) {
     : ""
   const model = requestedModel || (await getDefaultModel()) || "claude-sonnet-4-5"
 
-  const abort = new AbortController()
-  const encoder = new TextEncoder()
   let workspace: FixSession | null = existing
   let created = false
   // New workspaces are removed on failure; reused ones only lose the uncommitted run.
@@ -254,15 +253,12 @@ export async function POST(request: NextRequest) {
     if (created && workspace.queue.length === 0) await cleanupSession(workspace.id)
     else await resetPending(workspace.id).catch(() => {})
   }
-  const stream = new ReadableStream({
-    async start(controller) {
-      const send = (payload: unknown) => {
-        try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`))
-        } catch {
-          // Client disconnected.
-        }
-      }
+  const { job, resumed } = startJob({
+    kind: "fix",
+    repo,
+    number,
+    resultEvent: (session) => ({ type: "result", result: session }),
+    run: async ({ send, abort }) => {
       try {
         await cleanupStaleSessions()
         if (workspace) {
@@ -360,37 +356,20 @@ ${feedback}`
           session.results = []
           if (created && queued === 0) {
             await cleanupSession(session.id)
-            send({ type: "result", session: { id: null, summary: validated.summary, results, files, diff, truncated, hasChanges: false, queued } })
-          } else {
-            await saveSession(session)
-            send({ type: "result", session: { id: session.id, summary: validated.summary, results, files, diff, truncated, hasChanges: false, queued } })
+            return { id: null, summary: validated.summary, results, files, diff, truncated, hasChanges: false, queued }
           }
-        } else {
-          session.summary = validated.summary
-          session.results = results
           await saveSession(session)
-          send({
-            type: "result",
-            session: { id: session.id, summary: validated.summary, results, files, diff, truncated, hasChanges: true, headRef: pr.head.ref, queued },
-          })
+          return { id: session.id, summary: validated.summary, results, files, diff, truncated, hasChanges: false, queued }
         }
+        session.summary = validated.summary
+        session.results = results
+        await saveSession(session)
+        return { id: session.id, summary: validated.summary, results, files, diff, truncated, hasChanges: true, headRef: pr.head.ref, queued }
       } catch (error) {
         await rollback()
-        send({ type: "error", error: error instanceof Error ? error.message : "Fix agent failed" })
-      } finally {
-        try {
-          controller.close()
-        } catch {
-          // Already closed.
-        }
+        throw error
       }
     },
-    async cancel() {
-      abort.abort()
-      await rollback()
-    },
   })
-  return new Response(stream, {
-    headers: { "content-type": "application/x-ndjson", "cache-control": "no-store" },
-  })
+  return NextResponse.json({ jobId: job.id, resumed }, { status: 202 })
 }

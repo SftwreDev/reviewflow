@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   Check,
@@ -28,6 +28,7 @@ import type { IssueCommentData, ReviewData } from "@/components/pull-requests/pr
 import type { InlineComment } from "@/components/pull-requests/diff-viewer"
 import { useApp } from "@/lib/app-context"
 import { announceNotificationsChanged } from "@/lib/notification-types"
+import { dismissJob, startJob, useAgentJob } from "@/lib/agent-jobs"
 import { agentFeedbackId, agentFindingBody, type Review } from "@/lib/review-types"
 import { cn } from "@/lib/utils"
 
@@ -85,13 +86,28 @@ interface AddressFeedbackProps {
 
 export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, onReload }: AddressFeedbackProps) {
   const { user, llmProvider, claudeModel, claudeModels, llmModel, refreshFixMetrics } = useApp()
-  const [phase, setPhase] = useState<Phase>("idle")
+  const job = useAgentJob("fix", repo, pr.number)
+  const [localPhase, setPhase] = useState<Phase>("idle")
   const [error, setError] = useState("")
-  const [logs, setLogs] = useState<string[]>([])
-  const [outcome, setOutcome] = useState<FixOutcome | null>(null)
+  const [localOutcome, setOutcome] = useState<FixOutcome | null>(null)
+  const completedOutcome =
+    job.status === "done" && job.result ? (job.result as FixOutcome) : null
+  const outcome = localOutcome ?? completedOutcome
+  const jobError = job.status === "error" ? job.error : ""
+  const running = job.status === "running" || (localPhase === "running" && job.status === "idle")
+  const phase: Phase = running
+    ? "running"
+    : localPhase === "done"
+      ? "done"
+      : outcome
+        ? outcome.hasChanges
+          ? "review"
+          : "idle"
+        : "idle"
   const [replies, setReplies] = useState<Record<string, string>>({})
   const [postReplies, setPostReplies] = useState(true)
   const [commitMessage, setCommitMessage] = useState("")
+  const commitText = commitMessage || (outcome ? `Address review feedback\n\n${outcome.summary}`.trim() : "")
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null)
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [pushNow, setPushNow] = useState(false)
@@ -105,7 +121,6 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
   const [addressed, setAddressed] = useState<AddressedRecord[]>([])
   const [resolvedCommentIds, setResolvedCommentIds] = useState<Set<number>>(new Set())
   const [agentReview, setAgentReview] = useState<Review | null>(null)
-  const sessionRef = useRef<string | null>(null)
 
   const settingsModel = llmProvider === "claude" ? claudeModel : llmModel
   const effectiveModel = overrideModel || settingsModel || claudeModels[0]?.value || ""
@@ -270,35 +285,6 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     }
   }, [])
 
-  // Restore the local workspace (unpushed commits / merge state). Uncommitted leftovers of an
-  // abandoned agent run are dropped; they can never be reviewed again.
-  useEffect(() => {
-    let active = true
-    void (async () => {
-      const session = await refreshWorkspace()
-      if (!active || !session || !session.dirty || session.merging) return
-      await postJson("/api/fixes/discard", { sessionId: session.id }).catch(() => {})
-      if (active) await refreshWorkspace()
-    })()
-    return () => {
-      active = false
-    }
-  }, [refreshWorkspace])
-
-  // Leaving the tab with an unapproved run drops that run only; queued commits stay on disk.
-  useEffect(() => {
-    return () => {
-      const id = sessionRef.current
-      if (!id) return
-      void fetch("/api/fixes/discard", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: id }),
-        keepalive: true,
-      })
-    }
-  }, [])
-
   const toggle = (key: string) =>
     setSelected((prev) => {
       const next = new Set(prev ?? items.map((i) => i.key))
@@ -307,66 +293,33 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       return next
     })
 
+  useEffect(() => {
+    if (job.status !== "done") return
+    const timer = setTimeout(() => {
+      void refreshFixMetrics(repo)
+      void refreshWorkspace()
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [job.id, job.status, repo, refreshFixMetrics, refreshWorkspace])
+
   async function run() {
     setPhase("running")
     setError("")
-    setLogs([])
     setOutcome(null)
+    setCommitMessage("")
     setDone(null)
     try {
-      const response = await fetch("/api/fixes", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          repo,
-          number: pr.number,
-          targets: items.filter((i) => selectedKeys.has(i.key)).map(({ kind, id }) => ({ kind, id })),
-          skills: selectedSkills,
-          customPrompt,
-          model: effectiveModel,
-        }),
+      await startJob("fix", repo, pr.number, {
+        repo,
+        number: pr.number,
+        targets: items.filter((i) => selectedKeys.has(i.key)).map(({ kind, id }) => ({ kind, id })),
+        skills: selectedSkills,
+        customPrompt,
+        model: effectiveModel,
       })
-      if (!response.ok) {
-        const data = (await response.json().catch(() => ({}))) as { error?: string }
-        throw new Error(data.error || `Request failed with ${response.status}`)
-      }
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error("Agent stream unavailable")
-      const decoder = new TextDecoder()
-      let buffer = ""
-      let final: FixOutcome | null = null
-      let streamError = ""
-      while (true) {
-        const { done: finished, value } = await reader.read()
-        if (finished) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() ?? ""
-        for (const line of lines) {
-          if (!line.trim()) continue
-          let parsed: { type?: string; message?: string; session?: FixOutcome; error?: string }
-          try {
-            parsed = JSON.parse(line)
-          } catch {
-            continue
-          }
-          if (parsed.type === "log" && parsed.message) setLogs((prev) => [...prev, parsed.message as string])
-          else if (parsed.type === "result" && parsed.session) final = parsed.session
-          else if (parsed.type === "error") streamError = parsed.error || "Fix agent failed"
-        }
-      }
-      if (streamError) throw new Error(streamError)
-      if (!final) throw new Error("Agent finished without a result")
-      sessionRef.current = final.id
-      setOutcome(final)
-      setReplies(Object.fromEntries(final.results.map((r) => [keyOf(r.kind, r.id), r.reply])))
-      setCommitMessage(`Address review feedback\n\n${final.summary}`.trim())
-      setPhase(final.hasChanges ? "review" : "idle")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Fix agent failed")
       setPhase("idle")
-    } finally {
-      void refreshFixMetrics(repo)
     }
   }
 
@@ -380,21 +333,22 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
         "/api/fixes/approve",
         {
           sessionId: outcome.id,
-          commitMessage,
+          commitMessage: commitText,
           push: pushNow,
           replies: postReplies
-            ? outcome.results.map((r) => ({ kind: r.kind, id: r.id, body: replies[keyOf(r.kind, r.id)] ?? "" }))
+            ? outcome.results.map((r) => ({ kind: r.kind, id: r.id, body: replies[keyOf(r.kind, r.id)] ?? r.reply }))
             : [],
         }
       )
-      sessionRef.current = null
       if (data.pushed && data.sha) {
         setDone({ sha: data.sha, posted: data.posted ?? 0, resolved: data.resolved ?? 0, failed: data.failed ?? [] })
         setPhase("done")
+        void dismissJob("fix", repo, pr.number)
         announceNotificationsChanged()
       } else {
         setNotice(`Committed locally (${data.queued ?? 1} unpushed). Replies are posted when you push.`)
         setOutcome(null)
+        void dismissJob("fix", repo, pr.number)
         setPhase("idle")
       }
       if (data.pushed) await refreshAddressed()
@@ -404,8 +358,8 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       // The commit may already be queued locally even though the push failed.
       const session = await refreshWorkspace()
       if (session && !session.dirty) {
-        sessionRef.current = null
         setOutcome(null)
+        void dismissJob("fix", repo, pr.number)
         setPhase("idle")
       }
     } finally {
@@ -418,8 +372,8 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     setBusyAction("discard")
     try {
       await postJson("/api/fixes/discard", { sessionId: outcome.id })
-      sessionRef.current = null
       setOutcome(null)
+      void dismissJob("fix", repo, pr.number)
       setPhase("idle")
       await refreshWorkspace()
     } finally {
@@ -458,6 +412,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       const data = await postJson<{ sha: string; posted: number; resolved: number; failed: string[] }>("/api/fixes/push", { sessionId: workspace.id })
       setDone({ sha: data.sha, posted: data.posted, resolved: data.resolved ?? 0, failed: data.failed })
       setPhase("done")
+      void dismissJob("fix", repo, pr.number)
       announceNotificationsChanged()
       await refreshAddressed()
       await refreshWorkspace()
@@ -475,6 +430,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     setError("")
     try {
       await postJson("/api/fixes/discard", { sessionId: workspace.id, all: true })
+      void dismissJob("fix", repo, pr.number)
       setNotice("Local commits discarded.")
       await refreshWorkspace()
     } catch (e) {
@@ -484,7 +440,6 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     }
   }
 
-  const running = phase === "running"
   const authorOf = (r: FixResult) => items.find((i) => keyOf(i.kind, i.id) === keyOf(r.kind, r.id))
 
   return (
@@ -527,10 +482,10 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
             </Button>
           </div>
         </div>
-        {error && (
+        {(error || jobError) && (
           <div className="border-t border-destructive/20 bg-destructive/10 px-6 py-3 text-xs text-destructive flex items-center gap-2">
             <AlertTriangle className="size-4 shrink-0" />
-            <span>{error}</span>
+            <span>{error || jobError}</span>
           </div>
         )}
       </Card>
@@ -737,14 +692,14 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
         </>
       ) : null}
 
-      {(running || logs.length > 0) && phase !== "done" && (
+      {(running || job.logs.length > 0) && phase !== "done" && (
         <Card className="border-border/70 shadow-xs">
           <CardHeader className="py-3">
             <h3 className="text-sm font-semibold">Live Agent Logs</h3>
           </CardHeader>
           <CardContent>
             <pre className="max-h-80 overflow-auto whitespace-pre-wrap rounded-md bg-muted/40 p-3 text-[10px] leading-relaxed text-muted-foreground">
-              {logs.join("\n") || "Starting…"}
+              {job.logs.join("\n") || "Starting…"}
             </pre>
           </CardContent>
         </Card>
@@ -810,7 +765,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
                       {authorOf(r)?.location && <code className="font-mono text-[10px] text-muted-foreground">{authorOf(r)?.location}</code>}
                     </div>
                     <Textarea
-                      value={replies[k] ?? ""}
+                      value={replies[k] ?? r.reply ?? ""}
                       onChange={(e) => setReplies((prev) => ({ ...prev, [k]: e.target.value }))}
                       disabled={!postReplies}
                       className="min-h-16 text-xs"
@@ -827,14 +782,14 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
                 <label htmlFor="fix-commit" className="mb-1 block text-xs text-muted-foreground">
                   Commit message ({pushNow ? <>pushed to <code className="font-mono">{pr.head.ref}</code>, no force-push</> : "committed locally, pushed later with Push all"})
                 </label>
-                <Textarea id="fix-commit" value={commitMessage} onChange={(e) => setCommitMessage(e.target.value)} className="min-h-20 font-mono text-xs" />
+                <Textarea id="fix-commit" value={commitText} onChange={(e) => setCommitMessage(e.target.value)} className="min-h-20 font-mono text-xs" />
               </div>
               <label className="flex items-center gap-2 text-xs">
                 <Checkbox checked={pushNow} onCheckedChange={(v) => setPushNow(Boolean(v))} />
                 Push immediately after approving (otherwise keep it local and push all fixes at once)
               </label>
               <div className="flex flex-wrap items-center gap-2">
-                <Button onClick={() => void approve()} disabled={busyAction !== null || !commitMessage.trim()} className="gap-2">
+                <Button onClick={() => void approve()} disabled={busyAction !== null || !commitText.trim()} className="gap-2">
                   {busyAction === "approve" ? <LoaderCircle className="size-4 animate-spin" /> : <GitCommitHorizontal className="size-4" />}
                   {busyAction === "approve" ? (pushNow ? "Pushing..." : "Committing...") : pushNow ? "Approve, commit & push" : "Approve & keep local"}
                 </Button>
