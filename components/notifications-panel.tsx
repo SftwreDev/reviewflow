@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import {
   AlertTriangle,
   Bell,
@@ -111,7 +111,7 @@ function relativeTime(iso: string) {
 }
 
 export function NotificationsPanel() {
-  const { repo, openPr } = useApp()
+  const { repo, openPr, pulls } = useApp()
   const [open, setOpen] = useState(false)
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [loading, setLoading] = useState(false)
@@ -274,6 +274,11 @@ export function NotificationsPanel() {
   const visible = notifications.filter(
     (notification) => notification.repo === repo
   )
+  // Notifications written before the author field existed have an empty author; resolve it live.
+  const authorsByNumber = useMemo(
+    () => new Map(pulls.map((pull) => [pull.number, pull.user.login])),
+    [pulls]
+  )
   const unread = visible.filter((notification) => !notification.readAt).length
 
   async function post(action: "read" | "read-all", ids?: string[]) {
@@ -409,6 +414,8 @@ export function NotificationsPanel() {
             visible.map((notification) => {
               const style = KIND_STYLES[notification.kind]
               const Icon = style.icon
+              const author =
+                notification.author || authorsByNumber.get(notification.number) || ""
               return (
                 <button
                   key={notification.id}
@@ -452,6 +459,7 @@ export function NotificationsPanel() {
                     </span>
                     <span className="mt-1 block text-[10px] text-muted-foreground/70">
                       {relativeTime(notification.createdAt)}
+                      {author ? ` - PR Author: ${author}` : ""}
                     </span>
                   </span>
                 </button>

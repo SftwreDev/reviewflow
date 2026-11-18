@@ -14,6 +14,8 @@ export type AppNotification = {
   kind: NotificationKind
   title: string
   detail: string
+  /** GitHub login of the pull request author. Empty for records written before this field existed. */
+  author: string
   createdAt: string
   readAt: string | null
 }
@@ -25,6 +27,7 @@ export type NotificationInput = {
   kind: NotificationKind
   title?: string
   detail: string
+  author?: string
 }
 
 export const NOTIFICATIONS_CHANGED_EVENT = "reviewflow:notifications-changed"

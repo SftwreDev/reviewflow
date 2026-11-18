@@ -133,6 +133,7 @@ export async function POST(request: NextRequest) {
       title: string
       body: string | null
       head: { sha: string }
+      user: { login: string }
     }
     const filesResponse = await fetch(`${root}/pulls/${number}/files?per_page=100`, {
       headers,
@@ -248,6 +249,7 @@ ${s.content}
           number,
           kind: "review_completed",
           title: pr.title,
+          author: pr.user.login,
           detail:
             validated.findings.length === 0
               ? "Agent review finished · no findings"

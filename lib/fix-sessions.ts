@@ -72,6 +72,8 @@ export type FixSession = {
   id: string
   repo: string
   number: number
+  /** GitHub login of the pull request author. Absent on sessions created before this field existed. */
+  author?: string
   headRepo: string
   headRef: string
   /** Last known tip of the remote PR branch. Local commits are everything after it. */

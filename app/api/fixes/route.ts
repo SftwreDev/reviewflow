@@ -278,6 +278,7 @@ export async function POST(request: NextRequest) {
             id: made.id,
             repo,
             number,
+            author: pr.user.login,
             headRepo,
             headRef: pr.head.ref,
             baseSha: made.baseSha,
@@ -293,6 +294,7 @@ export async function POST(request: NextRequest) {
           await saveSession(workspace)
         }
         const session = workspace
+        session.author ??= pr.user.login
         session.model = model
         session.skills = skills
         for (const t of target) {

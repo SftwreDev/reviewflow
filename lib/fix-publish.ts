@@ -47,6 +47,7 @@ export async function publishQueue(session: FixSession, token: string): Promise<
     number: session.number,
     kind: "feedback_addressed",
     title: "",
+    author: session.author,
     detail:
       fixed > 0
         ? `Feedback addressed and pushed · ${fixed} item${fixed === 1 ? "" : "s"}`

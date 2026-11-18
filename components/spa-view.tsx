@@ -22,6 +22,7 @@ import {
   GitBranch,
   LoaderCircle,
   Search,
+  CalendarDays,
   CheckCircle2,
   AlertCircle,
   ArrowRight,
@@ -29,6 +30,44 @@ import {
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+
+const datePresetLabels: Record<string, string> = {
+  all: "Any time",
+  "24h": "Last 24h",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  custom: "Custom range",
+}
+
+type DatePreset = "all" | "24h" | "7d" | "30d" | "90d" | "custom"
+type DateBounds = { from: number; to: number }
+
+const NO_DATE_BOUNDS: DateBounds = { from: -Infinity, to: Infinity }
+
+const daysByPreset: Record<DatePreset, number> = {
+  all: 0,
+  "24h": 1,
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+  custom: 0,
+}
+
+// Anchored when the user picks a preset, so the window stays stable while browsing.
+function computeDateBounds(preset: DatePreset, from: string, to: string): DateBounds {
+  if (preset === "custom") {
+    const start = from ? new Date(`${from}T00:00:00`).getTime() : -Infinity
+    const end = to ? new Date(`${to}T23:59:59.999`).getTime() : Infinity
+    return {
+      from: Number.isNaN(start) ? -Infinity : start,
+      to: Number.isNaN(end) ? Infinity : end,
+    }
+  }
+  const days = daysByPreset[preset]
+  if (!days) return NO_DATE_BOUNDS
+  return { from: Date.now() - days * 86_400_000, to: Infinity }
+}
 
 export function SpaView() {
   const {
@@ -76,6 +115,10 @@ export function SpaView() {
   const [repoSearch, setRepoSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "open" | "merged" | "closed">("all")
   const [authorFilter, setAuthorFilter] = useState("all")
+  const [datePreset, setDatePreset] = useState<DatePreset>("all")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
+  const [dateBounds, setDateBounds] = useState<DateBounds>(NO_DATE_BOUNDS)
   const [githubTokenInput, setGithubTokenInput] = useState("")
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
   const [openaiKeyInput, setOpenaiKeyInput] = useState("")
@@ -96,8 +139,21 @@ export function SpaView() {
   // Reset a stale author selection (e.g. after switching repositories)
   const activeAuthor = authors.some(([login]) => login === authorFilter) ? authorFilter : "all"
 
-  // Filter pulls by query, state and author
-  const visiblePulls = useMemo(() => {
+  const changeDatePreset = (preset: DatePreset) => {
+    setDatePreset(preset)
+    setDateBounds(computeDateBounds(preset, dateFrom, dateTo))
+  }
+
+  const changeCustomDate = (nextFrom: string, nextTo: string) => {
+    setDateFrom(nextFrom)
+    setDateTo(nextTo)
+    if (datePreset === "custom") setDateBounds(computeDateBounds("custom", nextFrom, nextTo))
+  }
+
+  const hasDateFilter = datePreset !== "all"
+
+  // Filter pulls by query, author and last-updated date
+  const dateFilteredPulls = useMemo(() => {
     return pulls.filter((p) => {
       const matchesQuery =
         p.title.toLowerCase().includes(query.toLowerCase()) ||
@@ -107,12 +163,33 @@ export function SpaView() {
 
       if (activeAuthor !== "all" && (p.user.login || "unknown") !== activeAuthor) return false
 
-      if (statusFilter === "open") return p.state === "open" && !p.merged_at
-      if (statusFilter === "merged") return Boolean(p.merged_at)
-      if (statusFilter === "closed") return p.state === "closed" && !p.merged_at
+      if (hasDateFilter) {
+        const updated = Date.parse(p.updated_at)
+        if (Number.isNaN(updated)) return false
+        if (updated < dateBounds.from || updated > dateBounds.to) return false
+      }
+
       return true
     })
-  }, [pulls, query, statusFilter, activeAuthor])
+  }, [pulls, query, activeAuthor, hasDateFilter, dateBounds])
+
+  const visiblePulls = useMemo(() => {
+    if (statusFilter === "all") return dateFilteredPulls
+    if (statusFilter === "open")
+      return dateFilteredPulls.filter((p) => p.state === "open" && !p.merged_at)
+    if (statusFilter === "merged") return dateFilteredPulls.filter((p) => Boolean(p.merged_at))
+    return dateFilteredPulls.filter((p) => p.state === "closed" && !p.merged_at)
+  }, [dateFilteredPulls, statusFilter])
+
+  // Status tabs count the currently search/author/date-filtered set
+  const filteredCounts = useMemo(
+    () => ({
+      open: dateFilteredPulls.filter((p) => p.state === "open" && !p.merged_at).length,
+      merged: dateFilteredPulls.filter((p) => Boolean(p.merged_at)).length,
+      closed: dateFilteredPulls.filter((p) => p.state === "closed" && !p.merged_at).length,
+    }),
+    [dateFilteredPulls]
+  )
 
   const openCount = useMemo(
     () => pulls.filter((p) => p.state === "open" && !p.merged_at).length,
@@ -683,8 +760,8 @@ export function SpaView() {
           </section>
 
           {/* Search & Filter Bar */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="relative flex-1 max-w-md">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+            <div className="relative w-full min-w-56 max-w-md xl:flex-1">
               <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search PR title, number, or branch..."
@@ -694,46 +771,90 @@ export function SpaView() {
               />
             </div>
 
-            <Select value={activeAuthor} onValueChange={(v) => setAuthorFilter(v ?? "all")}>
-              <SelectTrigger size="sm" className="h-8 w-48 text-xs" aria-label="Filter by author">
-                <SelectValue>
-                  {(v: string) => (v === "all" ? "All authors" : v)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent align="start" alignItemWithTrigger={false}>
-                <SelectItem value="all">All authors ({pulls.length})</SelectItem>
-                {authors.map(([login, count]) => (
-                  <SelectItem key={login} value={login}>
-                    {login} ({count})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={activeAuthor} onValueChange={(v) => setAuthorFilter(v ?? "all")}>
+                <SelectTrigger size="sm" className="h-8 w-48 text-xs" aria-label="Filter by author">
+                  <SelectValue>
+                    {(v: string) => (v === "all" ? "All authors" : v)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" alignItemWithTrigger={false}>
+                  <SelectItem value="all">All authors ({pulls.length})</SelectItem>
+                  {authors.map(([login, count]) => (
+                    <SelectItem key={login} value={login}>
+                      {login} ({count})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-            {/* Status Filter Buttons */}
-            <div className="inline-flex rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs">
-              {(
-                [
-                  ["all", "All"],
-                  ["open", `Open (${openCount})`],
-                  ["merged", `Merged (${mergedCount})`],
-                  ["closed", `Closed (${closedCount})`],
-                ] as const
-              ).map(([statusKey, label]) => (
-                <button
-                  key={statusKey}
-                  type="button"
-                  onClick={() => setStatusFilter(statusKey)}
-                  className={cn(
-                    "rounded px-2.5 py-1 font-medium transition-colors cursor-pointer",
-                    statusFilter === statusKey
-                      ? "bg-background text-foreground shadow-xs font-semibold"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+              <Select
+                value={datePreset}
+                onValueChange={(v) => changeDatePreset((v ?? "all") as DatePreset)}
+              >
+                <SelectTrigger size="sm" className="h-8 w-44 text-xs" aria-label="Filter by updated date">
+                  <SelectValue>
+                    {(v: string) => datePresetLabels[v] ?? "Updated: any time"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent align="start" alignItemWithTrigger={false}>
+                  <SelectItem value="all">Any time</SelectItem>
+                  <SelectItem value="24h">Last 24 hours</SelectItem>
+                  <SelectItem value="7d">Last 7 days</SelectItem>
+                  <SelectItem value="30d">Last 30 days</SelectItem>
+                  <SelectItem value="90d">Last 90 days</SelectItem>
+                  <SelectItem value="custom">Custom range…</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {datePreset === "custom" && (
+                <div className="flex items-center gap-1.5">
+                  <CalendarDays className="size-3.5 text-muted-foreground" />
+                  <Input
+                    type="date"
+                    value={dateFrom}
+                    max={dateTo || undefined}
+                    onChange={(e) => changeCustomDate(e.target.value, dateTo)}
+                    aria-label="Updated on or after"
+                    className="h-8 w-36 text-xs"
+                  />
+                  <span className="text-xs text-muted-foreground">to</span>
+                  <Input
+                    type="date"
+                    value={dateTo}
+                    min={dateFrom || undefined}
+                    onChange={(e) => changeCustomDate(dateFrom, e.target.value)}
+                    aria-label="Updated on or before"
+                    className="h-8 w-36 text-xs"
+                  />
+                </div>
+              )}
+
+              {/* Status Filter Buttons */}
+              <div className="inline-flex rounded-md border border-border/60 bg-muted/40 p-0.5 text-xs">
+                {(
+                  [
+                    ["all", "All"],
+                    ["open", `Open (${filteredCounts.open})`],
+                    ["merged", `Merged (${filteredCounts.merged})`],
+                    ["closed", `Closed (${filteredCounts.closed})`],
+                  ] as const
+                ).map(([statusKey, label]) => (
+                  <button
+                    key={statusKey}
+                    type="button"
+                    onClick={() => setStatusFilter(statusKey)}
+                    className={cn(
+                      "rounded px-2.5 py-1 font-medium transition-colors cursor-pointer",
+                      statusFilter === statusKey
+                        ? "bg-background text-foreground shadow-xs font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -853,7 +974,7 @@ export function SpaView() {
                       </p>
                       <p>
                         {repo
-                          ? query
+                          ? query || statusFilter !== "all" || activeAuthor !== "all" || hasDateFilter
                             ? "No pull requests match your search criteria."
                             : "No authored pull requests found in this repository."
                           : "Configure your GitHub token and select a repository in Settings."}
