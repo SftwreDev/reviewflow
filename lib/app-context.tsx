@@ -36,6 +36,11 @@ export type Pull = {
   commentedByMe?: boolean
 }
 
+export type PullTotals = { all: number; open: number; merged: number; closed: number }
+
+/** PRs fetched from GitHub per request. Further pages load on demand. */
+const PULLS_FETCH_SIZE = 50
+
 export type RepoLabel = { name: string; color: string }
 
 export type FixMetrics = {
@@ -74,6 +79,11 @@ interface AppContextType {
   activePrId: number | null
   activePrData: PRDetailData | null
   isLoadingPulls: boolean
+  hasMorePulls: boolean
+  isLoadingMorePulls: boolean
+  /** Repo-wide counts from GitHub; null until the first page loads. */
+  pullTotals: PullTotals | null
+  loadMorePulls: () => Promise<void>
   isLoadingPr: boolean
   status: string
   statusType: "info" | "success" | "error"
@@ -134,6 +144,13 @@ export function AppProvider({
   const [repos, setRepos] = useState<Repo[]>([])
   const [user, setUser] = useState("")
   const [pulls, setPulls] = useState<Pull[]>([])
+  const pullsRef = useRef<Pull[]>([])
+  useEffect(() => {
+    pullsRef.current = pulls
+  }, [pulls])
+  const [pullsCursor, setPullsCursor] = useState<string | null>(null)
+  const [pullTotals, setPullTotals] = useState<PullTotals | null>(null)
+  const [isLoadingMorePulls, setIsLoadingMorePulls] = useState(false)
   const [repoLabels, setRepoLabels] = useState<RepoLabel[]>([])
   const [reviewHistory, setReviewHistory] = useState<
     { number: number; headSha: string; createdAt: string; tokenUsage?: TokenUsage }[]
@@ -185,17 +202,27 @@ export function AppProvider({
   }, [])
 
   const loadPullsForRepo = useCallback(
-    async (repoName: string) => {
+    async (repoName: string, background = false) => {
       if (!repoName) return
       setIsLoadingPulls(true)
       try {
         const [d, l, r] = await Promise.all([
-          req(`/api/github?repo=${encodeURIComponent(repoName)}`),
+          req(`/api/github?repo=${encodeURIComponent(repoName)}&limit=${PULLS_FETCH_SIZE}`),
           req(`/api/github?repo=${encodeURIComponent(repoName)}&labels=1`),
           req(`/api/reviews?repo=${encodeURIComponent(repoName)}`),
         ])
-        const newPulls = (d.pulls || []) as Pull[]
-        setPulls(newPulls)
+        const firstPage = (d.pulls || []) as Pull[]
+        const cursor = d.pageInfo?.hasNextPage ? (d.pageInfo.endCursor as string) : null
+        // Background polls refresh page one but must not discard pages the user already loaded.
+        const keepLoaded = background && pullsRef.current.length > firstPage.length
+        if (keepLoaded) {
+          const fresh = new Set(firstPage.map((p) => p.number))
+          setPulls([...firstPage, ...pullsRef.current.filter((p) => !fresh.has(p.number))])
+        } else {
+          setPulls(firstPage)
+          setPullsCursor(cursor)
+        }
+        setPullTotals((d.totals as PullTotals | undefined) ?? null)
         setRepoLabels(l.labels || [])
         setReviewHistory(r.reviews || [])
       } catch (e) {
@@ -207,6 +234,27 @@ export function AppProvider({
     },
     [req]
   )
+
+  const loadMorePulls = useCallback(async () => {
+    if (!repo || !pullsCursor || isLoadingMorePulls) return
+    setIsLoadingMorePulls(true)
+    try {
+      const d = await req(
+        `/api/github?repo=${encodeURIComponent(repo)}&limit=${PULLS_FETCH_SIZE}&after=${encodeURIComponent(pullsCursor)}`
+      )
+      const more = (d.pulls || []) as Pull[]
+      setPulls((prev) => {
+        const seen = new Set(prev.map((p) => p.number))
+        return [...prev, ...more.filter((p) => !seen.has(p.number))]
+      })
+      setPullsCursor(d.pageInfo?.hasNextPage ? (d.pageInfo.endCursor as string) : null)
+    } catch (e) {
+      setStatus((e as Error).message)
+      setStatusType("error")
+    } finally {
+      setIsLoadingMorePulls(false)
+    }
+  }, [req, repo, pullsCursor, isLoadingMorePulls])
 
   const loadPrData = useCallback(
     async (prNumber: number, targetRepo: string, bypassCache = false) => {
@@ -403,6 +451,8 @@ export function AppProvider({
       setUser("")
       setRepos([])
       setPulls([])
+      setPullsCursor(null)
+      setPullTotals(null)
       setStatus("GitHub disconnected")
       setStatusType("info")
     } catch (e) {
@@ -528,7 +578,7 @@ export function AppProvider({
     if (!repo) return
     const interval = setInterval(() => {
       // A background tab would burn GraphQL quota for updates nobody sees.
-      if (!document.hidden) void loadPullsForRepo(repo)
+      if (!document.hidden) void loadPullsForRepo(repo, true)
     }, 60_000)
     return () => clearInterval(interval)
   }, [repo, loadPullsForRepo])
@@ -631,6 +681,10 @@ export function AppProvider({
         activePrId,
         activePrData,
         isLoadingPulls,
+        hasMorePulls: pullsCursor !== null,
+        isLoadingMorePulls,
+        pullTotals,
+        loadMorePulls,
         isLoadingPr,
         status,
         statusType,

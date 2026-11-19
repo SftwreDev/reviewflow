@@ -27,9 +27,13 @@ import {
   AlertCircle,
   ArrowRight,
   ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+
+const PAGE_SIZES = [10, 25, 50] as const
 
 const datePresetLabels: Record<string, string> = {
   all: "Any time",
@@ -81,6 +85,10 @@ export function SpaView() {
     activePrId,
     activePrData,
     isLoadingPulls,
+    hasMorePulls,
+    isLoadingMorePulls,
+    pullTotals,
+    loadMorePulls,
     isLoadingPr,
     status,
     statusType,
@@ -127,6 +135,7 @@ export function SpaView() {
   const [openrouterKeyInput, setOpenrouterKeyInput] = useState("")
   const [baseBranchDraft, setBaseBranchDraft] = useState<string | null>(null)
   const baseBranchInput = baseBranchDraft ?? baseBranch
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0])
   const saveBranchSetting = async (branch: string) => {
     if (await saveBaseBranch(branch)) setBaseBranchDraft(null)
   }
@@ -188,6 +197,17 @@ export function SpaView() {
     return dateFilteredPulls.filter((p) => p.state === "closed" && !p.merged_at)
   }, [dateFilteredPulls, statusFilter])
 
+  // Pagination resets whenever the filter set (or page size) changes.
+  const pageSig = [repo, query, statusFilter, activeAuthor, datePreset, dateBounds.from, dateBounds.to, pageSize].join("|")
+  const [pageState, setPageState] = useState({ page: 1, sig: "" })
+  const totalPages = Math.max(1, Math.ceil(visiblePulls.length / pageSize))
+  const currentPage = Math.min(pageState.sig === pageSig ? pageState.page : 1, totalPages)
+  const pageStart = (currentPage - 1) * pageSize
+  const pagedPulls = useMemo(
+    () => visiblePulls.slice(pageStart, pageStart + pageSize),
+    [visiblePulls, pageStart, pageSize]
+  )
+
   // Status tabs count the currently search/author/date-filtered set
   const filteredCounts = useMemo(
     () => ({
@@ -199,16 +219,16 @@ export function SpaView() {
   )
 
   const openCount = useMemo(
-    () => pulls.filter((p) => p.state === "open" && !p.merged_at).length,
-    [pulls]
+    () => pullTotals?.open ?? pulls.filter((p) => p.state === "open" && !p.merged_at).length,
+    [pulls, pullTotals]
   )
   const mergedCount = useMemo(
-    () => pulls.filter((p) => Boolean(p.merged_at)).length,
-    [pulls]
+    () => pullTotals?.merged ?? pulls.filter((p) => Boolean(p.merged_at)).length,
+    [pulls, pullTotals]
   )
   const closedCount = useMemo(
-    () => pulls.filter((p) => p.state === "closed" && !p.merged_at).length,
-    [pulls]
+    () => pullTotals?.closed ?? pulls.filter((p) => p.state === "closed" && !p.merged_at).length,
+    [pulls, pullTotals]
   )
 
   const reviewMetrics = useMemo(() => {
@@ -783,7 +803,7 @@ export function SpaView() {
                   <GitPullRequest className="size-4" />
                 </div>
                 <p className="mt-2 text-2xl font-bold tracking-tight text-foreground">
-                  {pulls.length}
+                  {pullTotals?.all ?? pulls.length}
                 </p>
               </CardContent>
             </Card>
@@ -942,7 +962,7 @@ export function SpaView() {
                 </div>
               ) : (
                 <div className="divide-y divide-border/40">
-                  {visiblePulls.map((p) => {
+                  {pagedPulls.map((p) => {
                     const isMerged = Boolean(p.merged_at)
                     const isDraft = p.draft
                     const isOpen = p.state === "open" && !isMerged
@@ -1047,6 +1067,71 @@ export function SpaView() {
                   )}
                 </div>
               )}
+          {visiblePulls.length > 0 && (
+            <div className="flex flex-col gap-2 border-t border-border/50 bg-muted/20 px-5 py-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-3">
+                <span>
+                  Showing {pageStart + 1}–{pageStart + pagedPulls.length} of {visiblePulls.length}
+                  {hasMorePulls ? "+" : ""} loaded
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <span>Per page</span>
+                  <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v ?? PAGE_SIZES[0]))}>
+                    <SelectTrigger size="sm" className="h-7 w-16 text-xs" aria-label="Pull requests per page">
+                      <SelectValue>{(v: string) => v}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent align="start" alignItemWithTrigger={false}>
+                      {PAGE_SIZES.map((size) => (
+                        <SelectItem key={size} value={String(size)}>
+                          {size}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {hasMorePulls && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void loadMorePulls()}
+                    disabled={isLoadingMorePulls}
+                    className="h-7 gap-1.5 text-xs cursor-pointer"
+                  >
+                    {isLoadingMorePulls && <LoaderCircle className="size-3 animate-spin" />}
+                    <span>
+                      Load more from GitHub
+                      {pullTotals ? ` (${Math.max(0, pullTotals.all - pulls.length)} left)` : ""}
+                    </span>
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPageState({ page: currentPage - 1, sig: pageSig })}
+                  disabled={currentPage <= 1}
+                  className="h-7 gap-1 px-2 text-xs cursor-pointer"
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="size-3.5" />
+                </Button>
+                <span className="tabular-nums">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPageState({ page: currentPage + 1, sig: pageSig })}
+                  disabled={currentPage >= totalPages}
+                  className="h-7 gap-1 px-2 text-xs cursor-pointer"
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
             </CardContent>
           </Card>
         </>

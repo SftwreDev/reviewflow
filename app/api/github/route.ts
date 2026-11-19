@@ -7,6 +7,8 @@ import { syncPullNotifications } from "@/lib/notifications-store"
 
 export const runtime = "nodejs"
 const dataDir = path.join(process.env.HOME || ".", ".reviewflow")
+const DEFAULT_PULLS_PAGE = 50
+const MAX_PULLS_PAGE = 100
 const tokenPath = path.join(dataDir, "github-token")
 const keyPath = path.join(dataDir, "credential-key")
 async function key() {
@@ -147,74 +149,91 @@ export async function GET(request: NextRequest) {
       commentedByMe?: boolean
       reviewerActivity?: boolean
     }[] = []
-    let after: string | null = null
-    for (let i = 0; i < 10; i++) {
-      const result = await graphql(
-        token,
-        `query($owner: String!, $name: String!, $first: Int!, $after: String) {
-          repository(owner: $owner, name: $name) {
-            pullRequests(first: $first, after: $after, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
-              nodes {
-                number
-                title
-                state
-                isDraft
-                mergedAt
-                url
-                author { login }
-                createdAt
-                updatedAt
-                headRefName
-                headRefOid
-                baseRefName
-                labels(first: 10) { nodes { name color } }
-                reviewDecision
-                comments(first: 0) { totalCount }
-                commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-                issueComments: comments(last: 30) { nodes { author { login } } }
-                reviews(last: 30) { totalCount nodes { author { login } body state } }
-                reviewThreads(first: 100) { nodes { isResolved } }
-              }
-              pageInfo { hasNextPage endCursor }
+    const requestedLimit = Number(p.get("limit"))
+    const limit = Number.isInteger(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, MAX_PULLS_PAGE) : DEFAULT_PULLS_PAGE
+    const after = p.get("after")
+    const result = await graphql(
+      token,
+      `query($owner: String!, $name: String!, $first: Int!, $after: String, $totals: Boolean!) {
+        repository(owner: $owner, name: $name) {
+          allTotal: pullRequests(states: [OPEN, CLOSED, MERGED]) @include(if: $totals) { totalCount }
+          openTotal: pullRequests(states: [OPEN]) @include(if: $totals) { totalCount }
+          mergedTotal: pullRequests(states: [MERGED]) @include(if: $totals) { totalCount }
+          closedTotal: pullRequests(states: [CLOSED]) @include(if: $totals) { totalCount }
+          pullRequests(first: $first, after: $after, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes {
+              number
+              title
+              state
+              isDraft
+              mergedAt
+              url
+              author { login }
+              createdAt
+              updatedAt
+              headRefName
+              headRefOid
+              baseRefName
+              labels(first: 10) { nodes { name color } }
+              reviewDecision
+              comments(first: 0) { totalCount }
+              commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+              issueComments: comments(last: 30) { nodes { author { login } } }
+              reviews(last: 30) { totalCount nodes { author { login } body state } }
+              reviewThreads(first: 100) { nodes { isResolved } }
             }
+            pageInfo { hasNextPage endCursor }
           }
-        }`,
-        { owner, name, first: 100, after }
-      )
-      const connection = result.repository.pullRequests
-      for (const node of connection.nodes) {
-        const lastReview = node.reviews?.nodes?.[node.reviews.nodes.length - 1]
-        pulls.push({
-          number: node.number,
-          title: node.title,
-          state: node.state.toLowerCase(),
-          draft: node.isDraft,
-          merged_at: node.mergedAt,
-          html_url: node.url,
-          user: { login: node.author?.login ?? "" },
-          created_at: node.createdAt,
-          updated_at: node.updatedAt,
-          head: { ref: node.headRefName, sha: node.headRefOid },
-          base: { ref: node.baseRefName },
-          requested_reviewers: [],
-          labels: node.labels?.nodes?.map((l: { name: string; color: string }) => ({ name: l.name, color: l.color })) ?? [],
-          comments: node.comments?.totalCount ?? 0,
-          review_comments: node.reviewThreads?.nodes?.filter((n: { isResolved: boolean }) => !n.isResolved).length ?? 0,
-          reviewDecision: node.reviewDecision ?? null,
-          checkState: node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null,
-          reviewCount: node.reviews?.totalCount ?? 0,
-          lastReviewAuthor: lastReview?.author?.login ?? "",
-          lastReviewState: lastReview?.state ?? "",
-          commentedByMe: commentedByMe(node, who.login),
-          reviewerActivity: reviewedByOthers(node),
-        })
-      }
-      if (!connection.pageInfo.hasNextPage) break
-      after = connection.pageInfo.endCursor
+        }
+      }`,
+      { owner, name, first: limit, after, totals: !after }
+    )
+    const repository = result.repository
+    const connection = repository.pullRequests
+    for (const node of connection.nodes) {
+      const lastReview = node.reviews?.nodes?.[node.reviews.nodes.length - 1]
+      pulls.push({
+        number: node.number,
+        title: node.title,
+        state: node.state.toLowerCase(),
+        draft: node.isDraft,
+        merged_at: node.mergedAt,
+        html_url: node.url,
+        user: { login: node.author?.login ?? "" },
+        created_at: node.createdAt,
+        updated_at: node.updatedAt,
+        head: { ref: node.headRefName, sha: node.headRefOid },
+        base: { ref: node.baseRefName },
+        requested_reviewers: [],
+        labels: node.labels?.nodes?.map((l: { name: string; color: string }) => ({ name: l.name, color: l.color })) ?? [],
+        comments: node.comments?.totalCount ?? 0,
+        review_comments: node.reviewThreads?.nodes?.filter((n: { isResolved: boolean }) => !n.isResolved).length ?? 0,
+        reviewDecision: node.reviewDecision ?? null,
+        checkState: node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null,
+        reviewCount: node.reviews?.totalCount ?? 0,
+        lastReviewAuthor: lastReview?.author?.login ?? "",
+        lastReviewState: lastReview?.state ?? "",
+        commentedByMe: commentedByMe(node, who.login),
+        reviewerActivity: reviewedByOthers(node),
+      })
     }
+    // Only the first (most recently updated) page is diffed against the stored snapshot:
+    // any PR that changes moves to the front of UPDATED_AT order. Later pages are untouched history.
     // Bookkeeping for the notifications panel must not fail the pull list.
-    await syncPullNotifications(repo, pulls, who.login).catch(() => [])
-    return NextResponse.json({ pulls, user: who.login })
+    if (!after) await syncPullNotifications(repo, pulls, who.login).catch(() => [])
+    return NextResponse.json({
+      pulls,
+      user: who.login,
+      pageInfo: { hasNextPage: connection.pageInfo.hasNextPage, endCursor: connection.pageInfo.endCursor },
+      totals: after
+        ? undefined
+        : {
+            all: repository.allTotal?.totalCount ?? 0,
+            open: repository.openTotal?.totalCount ?? 0,
+            merged: repository.mergedTotal?.totalCount ?? 0,
+            closed: repository.closedTotal?.totalCount ?? 0,
+          },
+    })
   } catch (error) { return NextResponse.json({ error: error instanceof Error ? error.message : "GitHub request failed" }, { status: 502 }) }
 }
 export async function POST(request: NextRequest) {
