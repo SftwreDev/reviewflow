@@ -1072,7 +1072,7 @@ export function SpaView() {
               <div className="flex flex-wrap items-center gap-3">
                 <span>
                   Showing {pageStart + 1}–{pageStart + pagedPulls.length} of {visiblePulls.length}
-                  {hasMorePulls ? "+" : ""} loaded
+                  {hasMorePulls ? "+" : ""}
                 </span>
                 <div className="flex items-center gap-1.5">
                   <span>Per page</span>
@@ -1091,21 +1091,6 @@ export function SpaView() {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {hasMorePulls && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void loadMorePulls()}
-                    disabled={isLoadingMorePulls}
-                    className="h-7 gap-1.5 text-xs cursor-pointer"
-                  >
-                    {isLoadingMorePulls && <LoaderCircle className="size-3 animate-spin" />}
-                    <span>
-                      Load more from GitHub
-                      {pullTotals ? ` (${Math.max(0, pullTotals.all - pulls.length)} left)` : ""}
-                    </span>
-                  </Button>
-                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -1118,16 +1103,25 @@ export function SpaView() {
                 </Button>
                 <span className="tabular-nums">
                   Page {currentPage} of {totalPages}
+                  {hasMorePulls ? "+" : ""}
                 </span>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPageState({ page: currentPage + 1, sig: pageSig })}
-                  disabled={currentPage >= totalPages}
+                  onClick={async () => {
+                    // On the last loaded page, pull the next GitHub batch before advancing.
+                    if (currentPage >= totalPages) await loadMorePulls()
+                    setPageState({ page: currentPage + 1, sig: pageSig })
+                  }}
+                  disabled={(currentPage >= totalPages && !hasMorePulls) || isLoadingMorePulls}
                   className="h-7 gap-1 px-2 text-xs cursor-pointer"
                   aria-label="Next page"
                 >
-                  <ChevronRight className="size-3.5" />
+                  {isLoadingMorePulls ? (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  ) : (
+                    <ChevronRight className="size-3.5" />
+                  )}
                 </Button>
               </div>
             </div>
