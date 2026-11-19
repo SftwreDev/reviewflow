@@ -13,7 +13,8 @@ type Resolution = { summary: string; diff: string; truncated: boolean; markers: 
 
 interface MergeConflictsProps {
   sessionId: string
-  headRef: string
+  /** Branch being merged: the PR branch or the configured base branch. */
+  mergeRef: string
   conflicts: string[]
   agent: { skills: string[]; customPrompt: string; model: string }
   onChanged: () => void
@@ -21,7 +22,7 @@ interface MergeConflictsProps {
   onAborted: () => void
 }
 
-export function MergeConflicts({ sessionId, headRef, conflicts, agent, onChanged, onCompleted, onAborted }: MergeConflictsProps) {
+export function MergeConflicts({ sessionId, mergeRef, conflicts, agent, onChanged, onCompleted, onAborted }: MergeConflictsProps) {
   const [error, setError] = useState("")
   const [busy, setBusy] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ file: string; content: string; binary: boolean } | null>(null)
@@ -123,7 +124,7 @@ export function MergeConflicts({ sessionId, headRef, conflicts, agent, onChanged
       <CardHeader className="space-y-1 py-3">
         <div className="flex items-center gap-2">
           <GitMerge className="size-4 text-amber-600 dark:text-amber-400" />
-          <h3 className="text-sm font-semibold">Merge conflicts with origin/{headRef}</h3>
+          <h3 className="text-sm font-semibold">Merge conflicts with origin/{mergeRef}</h3>
           <Badge variant="secondary" className="text-[10px]">
             {conflicts.length} file{conflicts.length === 1 ? "" : "s"}
           </Badge>

@@ -25,6 +25,12 @@ const notificationSchema = z.object({
     "pr_comments",
     "changes_requested",
     "review_completed",
+    "review_submitted",
+    "ci_failed",
+    "ci_passed",
+    "pr_updated",
+    "pr_merged",
+    "pr_closed",
     "feedback_addressed",
     "pr_stale",
   ]),
@@ -42,6 +48,11 @@ const pullSnapshotSchema = z.object({
   comments: z.number().int().nonnegative(),
   reviewComments: z.number().int().nonnegative(),
   reviewDecision: z.string().nullable(),
+  /** Optional so snapshots written before these fields existed do not emit false events. */
+  reviewCount: z.number().int().nonnegative().optional(),
+  lastReviewAuthor: z.string().optional(),
+  lastReviewState: z.string().optional(),
+  checkState: z.string().nullable().optional(),
   open: z.boolean(),
   headSha: z.string(),
   title: z.string(),
@@ -71,6 +82,11 @@ export type NotificationPull = {
   review_comments?: number
   reviewDecision?: string | null
   reviewerActivity?: boolean
+  /** GraphQL statusCheckRollup state for the head commit, if CI reported anything. */
+  checkState?: string | null
+  reviewCount?: number
+  lastReviewAuthor?: string
+  lastReviewState?: string
 }
 
 let chain: Promise<unknown> = Promise.resolve()
@@ -203,16 +219,24 @@ export async function syncPullNotifications(
     const events: NotificationInput[] = []
 
     for (const pull of pulls) {
-      const open = pull.state === "open" && !pull.merged_at
+      const merged = pull.state === "merged" || Boolean(pull.merged_at)
+      const closed = pull.state === "closed"
+      const open = pull.state === "open" && !merged
       const comments = pull.comments ?? 0
       const reviewComments = pull.review_comments ?? 0
       const reviewDecision = pull.reviewDecision ?? null
+      const reviewCount = Math.max(0, pull.reviewCount ?? 0)
+      const checkState = pull.checkState ?? null
       const title = pull.title
       next[String(pull.number)] = {
         updatedAt: pull.updated_at,
         comments,
         reviewComments,
         reviewDecision,
+        reviewCount,
+        lastReviewAuthor: pull.lastReviewAuthor ?? "",
+        lastReviewState: pull.lastReviewState ?? "",
+        checkState,
         open,
         headSha: pull.head.sha,
         title,
@@ -232,6 +256,83 @@ export async function syncPullNotifications(
           })
         }
         if (old) {
+          const headChanged = pull.head.sha !== old.headSha
+          if (merged && old.open) {
+            events.push({
+              key: `pr_merged:${repo}#${pull.number}:${pull.merged_at ?? pull.head.sha}`,
+              repo,
+              number: pull.number,
+              author: pull.user.login,
+              kind: "pr_merged",
+              title,
+              detail: "Pull request merged",
+            })
+          } else if (closed && old.open) {
+            events.push({
+              key: `pr_closed:${repo}#${pull.number}:${pull.updated_at}`,
+              repo,
+              number: pull.number,
+              author: pull.user.login,
+              kind: "pr_closed",
+              title,
+              detail: "Pull request closed without merging",
+            })
+          }
+          if (open && old.open && headChanged) {
+            events.push({
+              key: `pr_updated:${repo}#${pull.number}:${pull.head.sha}`,
+              repo,
+              number: pull.number,
+              author: pull.user.login,
+              kind: "pr_updated",
+              title,
+              detail: `New commits pushed (${old.headSha.slice(0, 7)} → ${pull.head.sha.slice(0, 7)})`,
+            })
+          }
+          const failing = checkState === "FAILURE" || checkState === "ERROR"
+          const wasFailing =
+            old.checkState === "FAILURE" || old.checkState === "ERROR"
+          if (open && failing && old.checkState !== undefined && (!wasFailing || headChanged)) {
+            events.push({
+              key: `ci_failed:${repo}#${pull.number}:${pull.head.sha}:${checkState}`,
+              repo,
+              number: pull.number,
+              author: pull.user.login,
+              kind: "ci_failed",
+              title,
+              detail: `CI ${checkState?.toLowerCase() ?? "failed"} on ${pull.head.sha.slice(0, 7)}`,
+            })
+          } else if (open && checkState === "SUCCESS" && wasFailing) {
+            events.push({
+              key: `ci_passed:${repo}#${pull.number}:${pull.head.sha}`,
+              repo,
+              number: pull.number,
+              author: pull.user.login,
+              kind: "ci_passed",
+              title,
+              detail: `CI passing again on ${pull.head.sha.slice(0, 7)}`,
+            })
+          }
+          if (
+            old.reviewCount !== undefined &&
+            reviewCount > old.reviewCount &&
+            pull.lastReviewAuthor &&
+            pull.lastReviewAuthor !== viewerLogin &&
+            pull.lastReviewAuthor !== pull.user.login
+          ) {
+            const state = (pull.lastReviewState || "reviewed")
+              .toLowerCase()
+              .replaceAll("_", " ")
+            events.push({
+              key: `review_submitted:${repo}#${pull.number}:${reviewCount}:${pull.lastReviewAuthor}`,
+              repo,
+              number: pull.number,
+              author: pull.user.login,
+              kind: "review_submitted",
+              title,
+              detail: `@${pull.lastReviewAuthor} submitted a review (${state})`,
+            })
+          }
           const newComments = Math.max(0, comments - old.comments)
           const newThreads = Math.max(0, reviewComments - old.reviewComments)
           if (newComments + newThreads > 0) {

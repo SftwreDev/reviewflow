@@ -63,6 +63,7 @@ type Workspace = {
   queue: { sha: string; message: string }[]
   dirty: boolean
   merging: boolean
+  mergeRef: string
   conflicts: string[]
 }
 type BusyAction = "approve" | "discard" | "sync" | "push" | "discardAll"
@@ -294,9 +295,10 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
     })
 
   useEffect(() => {
-    if (job.status !== "done") return
+    if (job.status !== "done" && job.status !== "error") return
     const timer = setTimeout(() => {
-      void refreshFixMetrics(repo)
+      if (job.status === "done") void refreshFixMetrics(repo)
+      // A failed run may still have left a conflicted merge to resolve.
       void refreshWorkspace()
     }, 0)
     return () => clearTimeout(timer)
@@ -536,7 +538,7 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
       {workspace?.merging && (
         <MergeConflicts
           sessionId={workspace.id}
-          headRef={workspace.headRef}
+          mergeRef={workspace.mergeRef || workspace.headRef}
           conflicts={workspace.conflicts}
           agent={{ skills: selectedSkills, customPrompt, model: effectiveModel }}
           onChanged={() => void refreshWorkspace()}

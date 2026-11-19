@@ -6,8 +6,13 @@ import {
   Bell,
   Bot,
   CheckCheck,
+  CircleCheck,
+  CircleX,
   Clock,
+  GitCommitHorizontal,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestClosed,
   MessageSquare,
   Wrench,
   Volume2,
@@ -54,6 +59,42 @@ const KIND_STYLES: Record<
     icon: Bot,
     label: "Agent review finished",
     className: "border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400",
+  },
+  review_submitted: {
+    icon: MessageSquare,
+    label: "Review submitted",
+    className:
+      "border-indigo-500/30 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
+  },
+  ci_failed: {
+    icon: CircleX,
+    label: "CI failed",
+    className:
+      "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  },
+  ci_passed: {
+    icon: CircleCheck,
+    label: "CI passing",
+    className:
+      "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  },
+  pr_updated: {
+    icon: GitCommitHorizontal,
+    label: "New commits",
+    className:
+      "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  },
+  pr_merged: {
+    icon: GitMerge,
+    label: "Pull request merged",
+    className:
+      "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400",
+  },
+  pr_closed: {
+    icon: GitPullRequestClosed,
+    label: "Pull request closed",
+    className:
+      "border-zinc-500/30 bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
   },
   feedback_addressed: {
     icon: Wrench,
@@ -406,7 +447,7 @@ export function NotificationsPanel() {
               </p>
               <p className="mt-1 text-[11px] text-muted-foreground">
                 {repo
-                  ? "New PRs, review activity, and finished agent runs appear here."
+                  ? "New PRs, commits, reviews, CI results, merges, and agent runs appear here."
                   : "Select a repository to see notifications."}
               </p>
             </div>

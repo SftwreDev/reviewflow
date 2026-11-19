@@ -3,6 +3,12 @@ export type NotificationKind =
   | "pr_comments"
   | "changes_requested"
   | "review_completed"
+  | "review_submitted"
+  | "ci_failed"
+  | "ci_passed"
+  | "pr_updated"
+  | "pr_merged"
+  | "pr_closed"
   | "feedback_addressed"
   | "pr_stale"
 

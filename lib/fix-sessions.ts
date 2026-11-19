@@ -89,6 +89,10 @@ export type FixSession = {
   queue: QueuedCommit[]
   /** Remote tip being merged while a conflicted merge is in progress. */
   mergeRemoteSha?: string
+  /** Which branch the in-progress merge came from: the PR branch or the configured base branch. */
+  mergeSource?: "head" | "base"
+  /** Ref name shown while resolving a conflict. */
+  mergeRef?: string
 }
 
 export type SessionStatus = {
@@ -97,6 +101,8 @@ export type SessionStatus = {
   queue: { sha: string; message: string }[]
   dirty: boolean
   merging: boolean
+  /** Branch being merged when `merging` is true. */
+  mergeRef: string
   conflicts: string[]
 }
 
@@ -289,6 +295,7 @@ export async function sessionStatus(session: FixSession): Promise<SessionStatus>
     queue: session.queue.map(({ sha, message }) => ({ sha, message })),
     dirty: (await git(["status", "--porcelain"], { cwd: dir })).trim().length > 0,
     merging,
+    mergeRef: session.mergeRef ?? session.headRef,
     conflicts: merging ? await listConflicts(session.id) : [],
   }
 }
@@ -396,6 +403,8 @@ export async function syncWithRemote(session: FixSession, token: string, who: Id
     }
 
     session.mergeRemoteSha = remoteSha
+    session.mergeSource = "head"
+    session.mergeRef = session.headRef
     await saveSession(session)
     try {
       await git(
@@ -407,6 +416,8 @@ export async function syncWithRemote(session: FixSession, token: string, who: Id
       if (conflicts.length === 0) {
         await git(["merge", "--abort"], { cwd: dir }).catch(() => {})
         delete session.mergeRemoteSha
+        delete session.mergeSource
+        delete session.mergeRef
         await saveSession(session)
         throw error
       }
@@ -415,6 +426,8 @@ export async function syncWithRemote(session: FixSession, token: string, who: Id
     }
     session.baseSha = remoteSha
     delete session.mergeRemoteSha
+    delete session.mergeSource
+    delete session.mergeRef
     await saveSession(session)
     await neutralizeEscapingSymlinks(session.id)
     return { status: "merged", remoteSha, conflicts: [] }
@@ -423,9 +436,92 @@ export async function syncWithRemote(session: FixSession, token: string, who: Id
   }
 }
 
+/**
+ * Fetches the configured base branch and merges it into the PR branch. Kept separate from
+ * `syncWithRemote`: the base tip is not the PR tip, so `baseSha` must not move.
+ */
+export async function syncWithBase(
+  session: FixSession,
+  token: string,
+  who: Identity,
+  baseRepo: string,
+  baseRef: string
+): Promise<SyncResult> {
+  if (!REPO_RE.test(baseRepo)) throw new Error("Invalid base repository")
+  await git(["check-ref-format", `refs/heads/${baseRef}`])
+  const dir = worktreePath(session.id)
+  await assertNotMerging(session.id)
+  if ((await git(["status", "--porcelain"], { cwd: dir })).trim())
+    throw new Error("There are uncommitted agent changes. Approve or discard them before syncing.")
+
+  const ref = `refs/reviewflow/base-${session.id}`
+  const headRef = `refs/reviewflow/head-${session.id}`
+  let baseSha = ""
+  try {
+    // The cache is shallow, so deepen both sides until they share a merge base. Fetching only the
+    // base branch leaves the PR branch as a grafted root and merge-base cannot see the fork point.
+    let found = false
+    for (const depth of SYNC_DEPTHS) {
+      // Same repository: concurrent shallow fetches race on shallow.lock.
+      await git(
+        ["fetch", "--no-tags", `--depth=${depth}`, "--force", remoteUrl(session.headRepo), `+refs/heads/${session.headRef}:${headRef}`],
+        { cwd: dir, token }
+      )
+      await git(
+        ["fetch", "--no-tags", `--depth=${depth}`, "--force", remoteUrl(baseRepo), `+refs/heads/${baseRef}:${ref}`],
+        { cwd: dir, token }
+      )
+      baseSha = (await git(["rev-parse", ref], { cwd: dir })).trim()
+      if (await git(["merge-base", "HEAD", baseSha], { cwd: dir }).then(() => true, () => false)) {
+        found = true
+        break
+      }
+    }
+    if (!baseSha) throw new Error(`Could not fetch ${baseRepo}@${baseRef}`)
+    if (!found) throw new Error(`Could not find common history with ${baseRepo}@${baseRef}.`)
+    const isAncestor = (a: string, b: string) =>
+      git(["merge-base", "--is-ancestor", a, b], { cwd: dir }).then(() => true, () => false)
+    if (await isAncestor(baseSha, "HEAD")) return { status: "up-to-date", remoteSha: baseSha, conflicts: [] }
+
+    session.mergeRemoteSha = baseSha
+    session.mergeSource = "base"
+    session.mergeRef = baseRef
+    await saveSession(session)
+    try {
+      await git(
+        [...identityArgs(who), "merge", "--no-edit", "-m", `Merge ${baseRepo}@${baseRef} into ${session.headRef}`, baseSha],
+        { cwd: dir }
+      )
+    } catch (error) {
+      const conflicts = await listConflicts(session.id)
+      if (conflicts.length === 0) {
+        await git(["merge", "--abort"], { cwd: dir }).catch(() => {})
+        delete session.mergeRemoteSha
+        delete session.mergeSource
+        delete session.mergeRef
+        await saveSession(session)
+        throw error
+      }
+      await neutralizeEscapingSymlinks(session.id)
+      return { status: "conflict", remoteSha: baseSha, conflicts }
+    }
+    delete session.mergeRemoteSha
+    delete session.mergeSource
+    delete session.mergeRef
+    await saveSession(session)
+    await neutralizeEscapingSymlinks(session.id)
+    return { status: "merged", remoteSha: baseSha, conflicts: [] }
+  } finally {
+    await git(["update-ref", "-d", ref], { cwd: dir }).catch(() => {})
+    await git(["update-ref", "-d", headRef], { cwd: dir }).catch(() => {})
+  }
+}
+
 export async function abortMerge(session: FixSession) {
   await git(["merge", "--abort"], { cwd: worktreePath(session.id) })
   delete session.mergeRemoteSha
+  delete session.mergeSource
+  delete session.mergeRef
   await saveSession(session)
 }
 
@@ -501,8 +597,11 @@ export async function completeMerge(session: FixSession, who: Identity): Promise
   }
   if ((await listConflicts(session.id)).length) throw new Error("Some files are still in conflict")
   await git([...identityArgs(who), "commit", "--no-verify", "--no-edit"], { cwd: dir })
-  if (session.mergeRemoteSha) session.baseSha = session.mergeRemoteSha
+  // Only a merge of the PR branch itself advances the PR tip; a base merge is not pushable history.
+  if (session.mergeRemoteSha && session.mergeSource !== "base") session.baseSha = session.mergeRemoteSha
   delete session.mergeRemoteSha
+  delete session.mergeSource
+  delete session.mergeRef
   await saveSession(session)
   await neutralizeEscapingSymlinks(session.id)
   return (await git(["rev-parse", "HEAD"], { cwd: dir })).trim()

@@ -140,6 +140,10 @@ export async function GET(request: NextRequest) {
       comments?: number
       review_comments?: number
       reviewDecision?: string | null
+      checkState?: string | null
+      reviewCount?: number
+      lastReviewAuthor?: string
+      lastReviewState?: string
       commentedByMe?: boolean
       reviewerActivity?: boolean
     }[] = []
@@ -149,7 +153,7 @@ export async function GET(request: NextRequest) {
         token,
         `query($owner: String!, $name: String!, $first: Int!, $after: String) {
           repository(owner: $owner, name: $name) {
-            pullRequests(first: $first, after: $after, states: [OPEN, CLOSED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+            pullRequests(first: $first, after: $after, states: [OPEN, CLOSED, MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
               nodes {
                 number
                 title
@@ -166,8 +170,9 @@ export async function GET(request: NextRequest) {
                 labels(first: 10) { nodes { name color } }
                 reviewDecision
                 comments(first: 0) { totalCount }
+                commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
                 issueComments: comments(last: 30) { nodes { author { login } } }
-                reviews(last: 30) { nodes { author { login } body state } }
+                reviews(last: 30) { totalCount nodes { author { login } body state } }
                 reviewThreads(first: 100) { nodes { isResolved } }
               }
               pageInfo { hasNextPage endCursor }
@@ -178,6 +183,7 @@ export async function GET(request: NextRequest) {
       )
       const connection = result.repository.pullRequests
       for (const node of connection.nodes) {
+        const lastReview = node.reviews?.nodes?.[node.reviews.nodes.length - 1]
         pulls.push({
           number: node.number,
           title: node.title,
@@ -195,6 +201,10 @@ export async function GET(request: NextRequest) {
           comments: node.comments?.totalCount ?? 0,
           review_comments: node.reviewThreads?.nodes?.filter((n: { isResolved: boolean }) => !n.isResolved).length ?? 0,
           reviewDecision: node.reviewDecision ?? null,
+          checkState: node.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null,
+          reviewCount: node.reviews?.totalCount ?? 0,
+          lastReviewAuthor: lastReview?.author?.login ?? "",
+          lastReviewState: lastReview?.state ?? "",
           commentedByMe: commentedByMe(node, who.login),
           reviewerActivity: reviewedByOthers(node),
         })

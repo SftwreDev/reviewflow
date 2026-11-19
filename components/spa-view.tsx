@@ -108,6 +108,8 @@ export function SpaView() {
     removeOpenRouterKey,
     llmModel,
     saveLlmModel,
+    baseBranch,
+    saveBaseBranch,
     clearStatus,
   } = useApp()
 
@@ -123,6 +125,11 @@ export function SpaView() {
   const [claudeKeyInput, setClaudeKeyInput] = useState("")
   const [openaiKeyInput, setOpenaiKeyInput] = useState("")
   const [openrouterKeyInput, setOpenrouterKeyInput] = useState("")
+  const [baseBranchDraft, setBaseBranchDraft] = useState<string | null>(null)
+  const baseBranchInput = baseBranchDraft ?? baseBranch
+  const saveBranchSetting = async (branch: string) => {
+    if (await saveBaseBranch(branch)) setBaseBranchDraft(null)
+  }
 
   const activeModel = llmProvider === "claude" ? claudeModel : llmModel
   const saveActiveModel = llmProvider === "claude" ? saveClaudeModel : saveLlmModel
@@ -694,6 +701,63 @@ export function SpaView() {
                   </p>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Branch Sync Card */}
+          <Card className="md:col-span-2 border-border/70 shadow-xs">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <GitBranch className="size-4 text-primary" />
+                    <span>Branch Sync</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Base branch fetched and merged into the PR branch before the feedback agent runs.
+                    Empty uses the pull request&apos;s target branch.
+                  </CardDescription>
+                </div>
+                <Badge variant="secondary" className="font-mono text-xs">
+                  {baseBranch || "PR target"}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="w-full max-w-xs space-y-1">
+                  <label htmlFor="base-branch" className="text-xs font-medium text-foreground">
+                    Repository head branch
+                  </label>
+                  <Input
+                    id="base-branch"
+                    placeholder="main, master, develop..."
+                    value={baseBranchInput}
+                    onChange={(e) => setBaseBranchDraft(e.target.value)}
+                    className="text-xs font-mono"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => void saveBranchSetting(baseBranchInput.trim())}
+                  disabled={baseBranchInput.trim() === baseBranch}
+                >
+                  Save Branch
+                </Button>
+                {baseBranch && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void saveBranchSetting("")}
+                  >
+                    Use PR target
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Every feedback run first pulls the latest PR branch, then merges this branch into it.
+                Conflicts are shown in the PR workspace before the agent starts.
+              </p>
             </CardContent>
           </Card>
         </div>

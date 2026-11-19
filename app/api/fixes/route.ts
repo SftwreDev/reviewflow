@@ -6,6 +6,7 @@ import { readCredential } from "@/lib/credentials"
 import { getSkill } from "@/lib/skills"
 import { ghRest } from "@/lib/github-rest"
 import { agentOptions, describeToolUse } from "@/lib/fix-agent"
+import { readBaseBranch } from "@/lib/repo-settings"
 import { getReview } from "@/lib/reviews-store"
 import { agentFindingBody, parseAgentFeedbackId, type TokenUsage } from "@/lib/review-types"
 import { recordFixUsage } from "@/lib/fix-usage"
@@ -22,6 +23,8 @@ import {
   saveSession,
   sessionStatus,
   stageAndDiff,
+  syncWithBase,
+  syncWithRemote,
   worktreePath,
   type FeedbackKind,
   type FixSession,
@@ -73,6 +76,7 @@ type GhPr = {
   state: string
   merged_at: string | null
   user: { login: string }
+  base: { ref: string }
   head: { ref: string; sha: string; repo: { full_name: string } | null }
 }
 type GhInline = { id: number; user: { login: string }; body: string; path: string; line: number | null; original_line: number | null; diff_hunk: string; in_reply_to_id?: number }
@@ -139,6 +143,7 @@ export async function POST(request: NextRequest) {
   let target: Target[]
   let pr: GhPr
   let headRepo: string
+  let identity: { login: string; userId: number } = { login: "", userId: 0 }
   try {
     const [who, loaded, inline, issue, reviews] = await Promise.all([
       ghRest<GhUser>(githubToken, "/user"),
@@ -148,6 +153,7 @@ export async function POST(request: NextRequest) {
       ghRest<GhReview[]>(githubToken, `/repos/${repo}/pulls/${number}/reviews?per_page=100`),
     ])
     pr = loaded
+    identity = { login: who.login, userId: who.id }
     if (pr.user.login !== who.login)
       return NextResponse.json({ error: "Only pull requests you authored can be fixed from here" }, { status: 403 })
     if (pr.state !== "open" || pr.merged_at)
@@ -251,6 +257,8 @@ export async function POST(request: NextRequest) {
   // New workspaces are removed on failure; reused ones only lose the uncommitted run.
   const rollback = async () => {
     if (!workspace) return
+    // Keep a conflicted merge: the user resolves it in the UI before retrying.
+    if (workspace.mergeRemoteSha) return
     if (created && workspace.queue.length === 0) await cleanupSession(workspace.id)
     else await resetPending(workspace.id).catch(() => {})
   }
@@ -294,6 +302,37 @@ export async function POST(request: NextRequest) {
           await saveSession(workspace)
         }
         const session = workspace
+        // Always start from the latest remote PR tip, then fold in the configured base branch.
+        send({ type: "log", message: `Fetching origin/${pr.head.ref}…` })
+        const headSync = await syncWithRemote(session, githubToken, identity)
+        if (headSync.status === "conflict")
+          throw new Error(
+            `The PR branch has conflicts with your local fixes in ${headSync.conflicts.length} file(s). Resolve them below, then try again.`
+          )
+        const headMessage: Record<string, string> = {
+          "up-to-date": `origin/${pr.head.ref} is already up to date.`,
+          "fast-forwarded": `Pulled the latest origin/${pr.head.ref}.`,
+          merged: `Merged the latest origin/${pr.head.ref} into the workspace.`,
+        }
+        send({ type: "log", message: headMessage[headSync.status] ?? "Synced PR branch." })
+
+        const baseRef = (await readBaseBranch()) || pr.base.ref
+        if (baseRef !== pr.head.ref) {
+          send({ type: "log", message: `Fetching origin/${baseRef}…` })
+          const baseSync = await syncWithBase(session, githubToken, identity, repo, baseRef)
+          if (baseSync.status === "conflict")
+            throw new Error(
+              `The PR branch conflicts with origin/${baseRef} in ${baseSync.conflicts.length} file(s). Resolve them below, then try again.`
+            )
+          send({
+            type: "log",
+            message:
+              baseSync.status === "up-to-date"
+                ? `Already up to date with origin/${baseRef}.`
+                : `Merged origin/${baseRef} into the workspace.`,
+          })
+        }
+
         session.author ??= pr.user.login
         session.model = model
         session.skills = skills

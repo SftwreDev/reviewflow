@@ -103,6 +103,9 @@ interface AppContextType {
   removeOpenRouterKey: () => Promise<void>
   llmModel: string
   saveLlmModel: (model: string) => Promise<void>
+  /** Branch merged into the PR branch before the feedback agent runs. Empty = PR base branch. */
+  baseBranch: string
+  saveBaseBranch: (branch: string) => Promise<boolean>
   clearStatus: () => void
 }
 
@@ -150,6 +153,7 @@ export function AppProvider({
   const [openaiKeyConfigured, setOpenaiKeyConfigured] = useState(false)
   const [openrouterKeyConfigured, setOpenrouterKeyConfigured] = useState(false)
   const [llmModel, setLlmModel] = useState("")
+  const [baseBranch, setBaseBranch] = useState("")
   const [activeTab, setActiveTabState] = useState<TabType>(initialTab || "dashboard")
   const [activePrId, setActivePrId] = useState<number | null>(initialPrId ?? null)
   const [activePrData, setActivePrData] = useState<PRDetailData | null>(null)
@@ -502,6 +506,23 @@ export function AppProvider({
     [req]
   )
 
+  const saveBaseBranch = useCallback(
+    async (branch: string) => {
+      try {
+        const data = await req("/api/settings", { action: "base-branch", branch })
+        setBaseBranch(data.baseBranch || "")
+        setStatus(branch ? `Base branch set to ${branch}` : "Base branch reset to the PR target")
+        setStatusType("success")
+        return true
+      } catch (e) {
+        setStatus((e as Error).message)
+        setStatusType("error")
+        return false
+      }
+    },
+    [req]
+  )
+
   // Poll for PR updates to detect new comments/change requests
   useEffect(() => {
     if (!repo) return
@@ -525,6 +546,7 @@ export function AppProvider({
         setOpenaiKeyConfigured(Boolean(s.openaiKey))
         setOpenrouterKeyConfigured(Boolean(s.openrouterKey))
         setLlmModel(s.llmModel || "")
+        setBaseBranch(s.baseBranch || "")
         const activeRepoName = initialRepo || s.repo
         if (activeRepoName) setRepo(activeRepoName)
 
@@ -638,6 +660,8 @@ export function AppProvider({
         removeOpenRouterKey,
         llmModel,
         saveLlmModel,
+        baseBranch,
+        saveBaseBranch,
         clearStatus,
       }}
     >

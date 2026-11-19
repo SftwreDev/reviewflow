@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, unlink } from "node:fs/promises"
 import path from "node:path"
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto"
 import { hasClaudeCodeAuth } from "@/lib/claude"
+import { isValidBranchName, readBaseBranch, writeBaseBranch } from "@/lib/repo-settings"
 import { sameOrigin } from "@/lib/same-origin"
 export const runtime = "nodejs"
 const dir = path.join(process.env.HOME || ".", ".reviewflow")
@@ -24,6 +25,7 @@ export async function GET() {
     openrouterKey: Boolean(await secret("openrouter-key")),
     llmModel: (await secret("llm-model")) || null,
     repo: await readFile(path.join(dir, "repo"), "utf8").catch(() => ""),
+    baseBranch: await readBaseBranch(),
   })
 }
 export async function POST(req: NextRequest) {
@@ -33,6 +35,16 @@ export async function POST(req: NextRequest) {
     if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid request" }, { status: 400 })
     const data = body as Record<string, unknown>
     if (data.action === "repo" && typeof data.repo === "string" && /^[\w.-]+\/[\w.-]+$/.test(data.repo)) { await mkdir(dir, { recursive: true, mode: 0o700 }); await writeFile(path.join(dir, "repo"), data.repo, { mode: 0o600 }); return NextResponse.json({ ok: true }) }
+    if (data.action === "base-branch") {
+      const branch = typeof data.branch === "string" ? data.branch.trim() : ""
+      if (branch === "") {
+        await unlink(path.join(dir, "base-branch")).catch(() => {})
+        return NextResponse.json({ ok: true, baseBranch: "" })
+      }
+      if (!isValidBranchName(branch)) return NextResponse.json({ error: "Invalid branch name" }, { status: 400 })
+      await writeBaseBranch(branch)
+      return NextResponse.json({ ok: true, baseBranch: branch })
+    }
     if (data.action === "claude-remove") { await unlink(path.join(dir, "claude-key")).catch(() => {}); return NextResponse.json({ ok: true }) }
     if (data.action === "claude-save" && typeof data.key === "string" && data.key.length > 10 && data.key.length < 500) { await secret("claude-key", data.key); return NextResponse.json({ ok: true }) }
     if (data.action === "claude-model" && typeof data.model === "string" && data.model.length > 0 && data.model.length < 200) { await secret("claude-model", data.model); return NextResponse.json({ ok: true }) }
