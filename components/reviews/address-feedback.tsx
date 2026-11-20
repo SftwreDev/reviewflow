@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Check,
   CloudUpload,
+  CornerDownRight,
   GitCommitHorizontal,
   History,
   LoaderCircle,
@@ -529,6 +530,15 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
                   <span className="text-[10px] text-muted-foreground">{record.addressedAt.slice(0, 10)}</span>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground line-clamp-2">{record.body}</p>
+                {record.reply && (
+                  <div className="mt-2 border-l-2 border-primary/30 pl-3">
+                    <div className="flex items-center gap-1.5 text-[10px]">
+                      <CornerDownRight className="size-3 text-primary/70" />
+                      <span className="font-medium text-foreground">Your reply</span>
+                    </div>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-muted-foreground line-clamp-3">{record.reply}</p>
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>
@@ -734,6 +744,76 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
             </CardContent>
           </Card>
 
+          <Card className="border-border/70 shadow-xs">
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 py-3">
+              <div className="space-y-0.5">
+                <h3 className="text-sm font-semibold">Feedback &amp; replies ({outcome.results.length})</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Each reply is posted as a threaded response to its original comment.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-xs">
+                <Checkbox checked={postReplies} onCheckedChange={(v) => setPostReplies(Boolean(v))} />
+                Post replies after pushing
+              </label>
+            </CardHeader>
+            <CardContent className="space-y-3 p-4 pt-0">
+              {outcome.results.length === 0 ? (
+                <p className="text-xs text-muted-foreground">The agent did not draft replies for these comments.</p>
+              ) : (
+                outcome.results.map((r) => {
+                  const k = keyOf(r.kind, r.id)
+                  const item = authorOf(r)
+                  const record = addressedByKey.get(k)
+                  const author = item?.author ?? record?.author
+                  const body = item?.body ?? record?.body
+                  const location = item?.location ?? record?.location
+                  return (
+                    <article key={k} className="overflow-hidden rounded-lg border border-border/70 bg-card">
+                      <div className="p-3.5">
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <Badge className={cn("text-[10px] font-semibold uppercase", STATUS_STYLES[r.status])}>{r.status}</Badge>
+                          {r.kind === "agent" ? (
+                            <Badge className="gap-1 border-primary/30 bg-primary/10 text-[10px] font-semibold text-primary">
+                              <Sparkles className="size-3" />
+                              In-house Agent Review
+                            </Badge>
+                          ) : (
+                            <span className="font-semibold text-foreground">@{author ?? "reviewer"}</span>
+                          )}
+                          {location && (
+                            <code className="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{location}</code>
+                          )}
+                        </div>
+                        <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted-foreground">
+                          {body ?? "Feedback addressed by this change."}
+                        </p>
+                      </div>
+                      <div className="border-t border-border/50 bg-muted/25 px-3.5 py-3">
+                        <div className="border-l-2 border-primary/30 pl-3">
+                          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                            <CornerDownRight className="size-3.5 text-primary/70" />
+                            <span className="font-medium text-foreground">Your reply</span>
+                            <span className="text-muted-foreground">
+                              {postReplies ? "will be posted after the push" : "will not be posted"}
+                            </span>
+                          </div>
+                          <Textarea
+                            aria-label={`Reply to ${author ?? "reviewer"}`}
+                            value={replies[k] ?? r.reply ?? ""}
+                            onChange={(e) => setReplies((prev) => ({ ...prev, [k]: e.target.value }))}
+                            disabled={!postReplies}
+                            className="mt-2 min-h-16 bg-background text-xs"
+                          />
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })
+              )}
+            </CardContent>
+          </Card>
+
           <Card className="border-border/70 shadow-xs overflow-hidden">
             <CardHeader className="py-3">
               <h3 className="text-sm font-semibold">Proposed changes</h3>
@@ -745,36 +825,6 @@ export function AddressFeedback({ repo, pr, reviews, comments, reviewComments, o
                   Diff display truncated. The full change set is still what will be committed.
                 </p>
               )}
-            </CardContent>
-          </Card>
-
-          <Card className="border-border/70 shadow-xs">
-            <CardHeader className="flex flex-row items-center justify-between py-3">
-              <h3 className="text-sm font-semibold">Replies to reviewers</h3>
-              <label className="flex items-center gap-2 text-xs">
-                <Checkbox checked={postReplies} onCheckedChange={(v) => setPostReplies(Boolean(v))} />
-                Post replies after pushing
-              </label>
-            </CardHeader>
-            <CardContent className="space-y-3 p-4 pt-0">
-              {outcome.results.map((r) => {
-                const k = keyOf(r.kind, r.id)
-                return (
-                  <div key={k} className="space-y-1.5 rounded-md border border-border/60 p-3">
-                    <div className="flex items-center gap-2 text-xs">
-                      <Badge className={cn("text-[10px] font-semibold uppercase", STATUS_STYLES[r.status])}>{r.status}</Badge>
-                      <span className="font-semibold">@{authorOf(r)?.author ?? "reviewer"}</span>
-                      {authorOf(r)?.location && <code className="font-mono text-[10px] text-muted-foreground">{authorOf(r)?.location}</code>}
-                    </div>
-                    <Textarea
-                      value={replies[k] ?? r.reply ?? ""}
-                      onChange={(e) => setReplies((prev) => ({ ...prev, [k]: e.target.value }))}
-                      disabled={!postReplies}
-                      className="min-h-16 text-xs"
-                    />
-                  </div>
-                )
-              })}
             </CardContent>
           </Card>
 
